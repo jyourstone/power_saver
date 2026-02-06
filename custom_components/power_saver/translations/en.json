@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Power Saver",
+        "description": "Configure a power saver instance for an appliance. You can add multiple instances for different appliances.",
+        "data": {
+          "name": "Name",
+          "nordpool_sensor": "Nordpool price sensor",
+          "min_hours": "Minimum active hours",
+          "always_cheap_price": "Always-cheap price threshold",
+          "always_expensive_price": "Always-expensive price threshold",
+          "rolling_window_hours": "Rolling window size (hours)"
+        },
+        "data_description": {
+          "name": "A descriptive name for this instance (e.g., 'Water Heater', 'Floor Heating').",
+          "nordpool_sensor": "The Nordpool sensor that provides hourly electricity prices.",
+          "min_hours": "Minimum number of hours to keep active per day. The cheapest hours are selected.",
+          "always_cheap_price": "Price below which the slot is always activated, regardless of other settings. Set to 0 to disable.",
+          "always_expensive_price": "Price at or above which the slot is never activated (safety cutoff). Set to 0 to disable.",
+          "rolling_window_hours": "Ensures minimum active hours within any rolling window of this size. Set to 0 to disable (uses pure daily price optimization)."
+        }
+      }
+    },
+    "error": {
+      "invalid_nordpool_sensor": "The selected sensor does not appear to be a Nordpool sensor (missing raw_today attribute).",
+      "invalid_rolling_window": "When rolling window is enabled, minimum active hours must be greater than 0.",
+      "already_configured": "A power saver with this name and sensor is already configured."
+    },
+    "abort": {
+      "already_configured": "This power saver instance is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Power Saver Options",
+        "description": "Adjust scheduling parameters. Changes take effect immediately.",
+        "data": {
+          "min_hours": "Minimum active hours",
+          "always_cheap_price": "Always-cheap price threshold",
+          "always_expensive_price": "Always-expensive price threshold",
+          "rolling_window_hours": "Rolling window size (hours)"
+        },
+        "data_description": {
+          "min_hours": "Minimum number of hours to keep active per day (or per rolling window).",
+          "always_cheap_price": "Price below which slots are always activated. 0 = disabled.",
+          "always_expensive_price": "Price at or above which slots are never activated. 0 = disabled.",
+          "rolling_window_hours": "Rolling window constraint in hours. 0 = disabled."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "schedule": {
+        "name": "Schedule"
+      }
+    }
+  }
+}
