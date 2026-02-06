@@ -216,14 +216,13 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
         This provides soft persistence across HA restarts without file storage.
         """
-        # Build the expected entity_id from the config entry
-        # The sensor entity may already exist from a previous run
+        from homeassistant.helpers import entity_registry as er
+
+        registry = er.async_get(self.hass)
+
         for state in self.hass.states.async_all("sensor"):
             if state.attributes.get("recent_activity_history") is not None:
-                # Check if this sensor belongs to our config entry
-                entity_entry = self.hass.helpers.entity_registry.async_get(
-                    state.entity_id
-                )
+                entity_entry = registry.async_get(state.entity_id)
                 if (
                     entity_entry
                     and entity_entry.config_entry_id == self.config_entry.entry_id
