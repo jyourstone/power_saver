@@ -1,137 +1,245 @@
-"""Tests for the Power Saver sensor entity."""
+"""Tests for the Power Saver sensor entities."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock
 
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import UnitOfTime
+from homeassistant.helpers.entity import EntityCategory
+
 from custom_components.power_saver.coordinator import PowerSaverData
-from custom_components.power_saver.sensor import PowerSaverSensor
+from custom_components.power_saver.sensor import (
+    ActiveHoursInWindowSensor,
+    LastActiveSensor,
+    PowerSaverSensor,
+    ScheduleSensor,
+)
 
 
-def test_sensor_native_value_active():
+def _make_entry(entry_id="test_entry_id"):
+    entry = MagicMock()
+    entry.entry_id = entry_id
+    entry.data = {"name": "Test"}
+    return entry
+
+
+# --- Main status sensor ---
+
+
+def test_status_sensor_unique_id():
+    """Test main sensor has correct unique ID."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = PowerSaverSensor(coordinator, _make_entry("abc"))
+    assert sensor.unique_id == "abc_status"
+
+
+def test_status_sensor_native_value_active():
     """Test sensor returns 'active' when coordinator says active."""
     coordinator = MagicMock()
     coordinator.data = PowerSaverData(current_state="active")
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.native_value == "active"
 
 
-def test_sensor_native_value_standby():
+def test_status_sensor_native_value_standby():
     """Test sensor returns 'standby' when coordinator says standby."""
     coordinator = MagicMock()
     coordinator.data = PowerSaverData(current_state="standby")
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.native_value == "standby"
 
 
-def test_sensor_native_value_no_data():
+def test_status_sensor_native_value_no_data():
     """Test sensor returns 'standby' when coordinator has no data."""
     coordinator = MagicMock()
     coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.native_value == "standby"
 
 
-def test_sensor_icon_active():
+def test_status_sensor_icon_active():
     """Test icon when active."""
     coordinator = MagicMock()
     coordinator.data = PowerSaverData(current_state="active")
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.icon == "mdi:power-plug"
 
 
-def test_sensor_icon_standby():
+def test_status_sensor_icon_standby():
     """Test icon when standby."""
     coordinator = MagicMock()
     coordinator.data = PowerSaverData(current_state="standby")
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.icon == "mdi:power-plug-off"
 
 
-def test_sensor_icon_emergency():
+def test_status_sensor_icon_emergency():
     """Test icon in emergency mode."""
     coordinator = MagicMock()
     coordinator.data = PowerSaverData(emergency_mode=True)
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.icon == "mdi:alert-circle"
 
 
-def test_sensor_extra_attributes():
-    """Test that all expected attributes are exposed."""
+def test_status_sensor_attributes():
+    """Test that main sensor exposes only user-facing attributes."""
     coordinator = MagicMock()
     coordinator.data = PowerSaverData(
-        schedule=[{"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"}],
         current_state="active",
         current_price=0.1,
         min_price=0.03,
         next_change="2026-02-06T11:00:00+01:00",
         active_slots=10,
-        last_active_time="2026-02-06T10:00:00+01:00",
-        hours_since_last_active=0.5,
-        active_slots_in_window=8,
-        active_hours_in_window=2.0,
-        activity_history=["2026-02-06T10:00:00+01:00"],
         emergency_mode=False,
     )
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     attrs = sensor.extra_state_attributes
 
-    assert "schedule" in attrs
-    assert "current_price" in attrs
-    assert "min_price" in attrs
-    assert "next_change" in attrs
-    assert "active_slots" in attrs
-    assert "active_hours_in_window" in attrs
-    assert "emergency_mode" in attrs
-    assert "recent_activity_history" in attrs
-    assert attrs["current_price"] == 0.1
-    assert attrs["active_slots"] == 10
-    assert attrs["emergency_mode"] is False
+    assert attrs == {
+        "current_price": 0.1,
+        "min_price": 0.03,
+        "next_change": "2026-02-06T11:00:00+01:00",
+        "active_slots": 10,
+        "emergency_mode": False,
+    }
+    assert "schedule" not in attrs
 
 
-def test_sensor_extra_attributes_no_data():
+def test_status_sensor_attributes_no_data():
     """Test that attributes return empty dict when no data."""
     coordinator = MagicMock()
     coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"name": "Test"}
-
-    sensor = PowerSaverSensor(coordinator, entry)
+    sensor = PowerSaverSensor(coordinator, _make_entry())
     assert sensor.extra_state_attributes == {}
+
+
+# --- Schedule diagnostic sensor ---
+
+
+def test_schedule_sensor_entity_category():
+    """Test schedule sensor is diagnostic."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = ScheduleSensor(coordinator, _make_entry())
+    assert sensor.entity_category == EntityCategory.DIAGNOSTIC
+
+
+def test_schedule_sensor_unique_id():
+    """Test schedule sensor unique ID."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = ScheduleSensor(coordinator, _make_entry("abc"))
+    assert sensor.unique_id == "abc_schedule"
+
+
+def test_schedule_sensor_native_value():
+    """Test schedule sensor returns count of active slots."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(
+        schedule=[
+            {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
+            {"price": 0.5, "time": "2026-02-06T11:00:00+01:00", "status": "standby"},
+            {"price": 0.2, "time": "2026-02-06T12:00:00+01:00", "status": "active"},
+        ],
+    )
+    sensor = ScheduleSensor(coordinator, _make_entry())
+    assert sensor.native_value == 2
+
+
+def test_schedule_sensor_attributes():
+    """Test schedule sensor exposes the full schedule."""
+    schedule = [{"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"}]
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(schedule=schedule)
+    sensor = ScheduleSensor(coordinator, _make_entry())
+    assert sensor.extra_state_attributes == {"schedule": schedule}
+
+
+def test_schedule_sensor_no_data():
+    """Test schedule sensor returns None/empty when no data."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = ScheduleSensor(coordinator, _make_entry())
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes == {}
+
+
+# --- Last Active diagnostic sensor ---
+
+
+def test_last_active_sensor_device_class():
+    """Test last active sensor has timestamp device class."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = LastActiveSensor(coordinator, _make_entry())
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+
+
+def test_last_active_sensor_unique_id():
+    """Test last active sensor unique ID."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = LastActiveSensor(coordinator, _make_entry("abc"))
+    assert sensor.unique_id == "abc_last_active"
+
+
+def test_last_active_sensor_native_value():
+    """Test last active sensor returns parsed datetime."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(
+        last_active_time="2026-02-06T10:00:00+01:00"
+    )
+    sensor = LastActiveSensor(coordinator, _make_entry())
+    expected = datetime(2026, 2, 6, 10, 0, tzinfo=timezone(timedelta(hours=1)))
+    assert sensor.native_value == expected
+
+
+def test_last_active_sensor_no_data():
+    """Test last active sensor returns None when no data."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(last_active_time=None)
+    sensor = LastActiveSensor(coordinator, _make_entry())
+    assert sensor.native_value is None
+
+
+# --- Active Hours in Window diagnostic sensor ---
+
+
+def test_active_hours_in_window_sensor_device_class():
+    """Test active hours in window has duration device class."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = ActiveHoursInWindowSensor(coordinator, _make_entry())
+    assert sensor.device_class == SensorDeviceClass.DURATION
+    assert sensor.native_unit_of_measurement == UnitOfTime.HOURS
+
+
+def test_active_hours_in_window_sensor_native_value():
+    """Test active hours in window returns the value."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(active_hours_in_window=3.5)
+    sensor = ActiveHoursInWindowSensor(coordinator, _make_entry())
+    assert sensor.native_value == 3.5
+
+
+# --- All diagnostic sensors share base properties ---
+
+
+def test_all_diagnostic_sensors_are_diagnostic():
+    """Test all diagnostic sensors have DIAGNOSTIC entity category."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    entry = _make_entry()
+
+    for cls in (
+        ScheduleSensor,
+        LastActiveSensor,
+        ActiveHoursInWindowSensor,
+    ):
+        sensor = cls(coordinator, entry)
+        assert sensor.entity_category == EntityCategory.DIAGNOSTIC, (
+            f"{cls.__name__} should be diagnostic"
+        )

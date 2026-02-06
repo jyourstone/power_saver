@@ -1,0 +1,14 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: power_saver_ha
+    restart: unless-stopped
+    volumes:
+      # HA config directory (persistent)
+      - ./config:/config
+      # Mount the integration directly into HA
+      - ../custom_components/power_saver:/config/custom_components/power_saver:ro
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=Europe/Stockholm

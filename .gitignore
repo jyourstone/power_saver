@@ -1,4 +1,9 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Dev environment - HA generates these in dev/config/
+dev/config/*
+!dev/config/configuration.yaml

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -34,6 +35,8 @@ from . import scheduler
 
 _LOGGER = logging.getLogger(__name__)
 
+STORAGE_VERSION = 1
+
 
 @dataclass
 class PowerSaverData:
@@ -46,10 +49,7 @@ class PowerSaverData:
     next_change: str | None = None
     active_slots: int = 0
     last_active_time: str | None = None
-    hours_since_last_active: float | None = None
-    active_slots_in_window: int = 0
     active_hours_in_window: float = 0.0
-    activity_history: list[str] = field(default_factory=list)
     emergency_mode: bool = False
 
 
@@ -68,8 +68,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             update_interval=timedelta(minutes=UPDATE_INTERVAL_MINUTES),
         )
         self._nordpool_entity = entry.data[CONF_NORDPOOL_SENSOR]
+        self._store = Store(hass, STORAGE_VERSION, f"power_saver.{entry.entry_id}")
         self._activity_history: list[str] = []
-        self._history_recovered = False
+        self._history_loaded = False
         self._unsub_nordpool: callback | None = None
         self._previous_state: str | None = None
 
@@ -108,12 +109,12 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         rolling_window_hours = options.get(
             CONF_ROLLING_WINDOW_HOURS, DEFAULT_ROLLING_WINDOW_HOURS
         )
-        rolling_window = rolling_window_hours if rolling_window_hours > 0 else None
+        rolling_window = rolling_window_hours
 
-        # Recover activity history from existing sensor state on first run
-        if not self._history_recovered:
-            self._recover_activity_history()
-            self._history_recovered = True
+        # Load activity history from persistent storage on first run
+        if not self._history_loaded:
+            await self._async_load_history()
+            self._history_loaded = True
 
         # Emergency mode: no price data at all
         if not raw_today and not raw_tomorrow:
@@ -137,10 +138,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 current_state=STATE_ACTIVE,
                 active_slots=96,
                 last_active_time=now.isoformat(),
-                hours_since_last_active=0.0,
-                active_slots_in_window=96,
                 active_hours_in_window=24.0,
-                activity_history=[],
                 emergency_mode=True,
             )
 
@@ -177,27 +175,15 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         today_prices = [s.get("value") for s in raw_today if s.get("value") is not None]
         min_price = round(min(today_prices), 3) if today_prices else None
 
-        # Update activity history
-        window_hours = rolling_window_hours if rolling_window_hours > 0 else 24.0
+        # Update activity history and persist to storage
         self._activity_history = scheduler.build_activity_history(
-            schedule, self._activity_history, now, window_hours
+            schedule, self._activity_history, now, rolling_window_hours
         )
+        await self._async_save_history()
 
         # Compute metrics
-        active_slots_in_window = len(self._activity_history)
-        active_hours_in_window = round(active_slots_in_window / 4.0, 1)
-
-        last_active_time: str | None = None
-        hours_since_last_active: float | None = None
-        if self._activity_history:
-            last_active_time = self._activity_history[-1]
-            last_active_dt = datetime.fromisoformat(last_active_time).astimezone(
-                now.tzinfo
-            )
-            hours_since_last_active = round(
-                (now - last_active_dt).total_seconds() / 3600, 1
-            )
-
+        active_hours_in_window = round(len(self._activity_history) / 4.0, 1)
+        last_active_time = self._activity_history[-1] if self._activity_history else None
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
 
         # Control entities on state change
@@ -213,10 +199,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             next_change=next_change,
             active_slots=active_slots,
             last_active_time=last_active_time,
-            hours_since_last_active=hours_since_last_active,
-            active_slots_in_window=active_slots_in_window,
             active_hours_in_window=active_hours_in_window,
-            activity_history=self._activity_history,
             emergency_mode=False,
         )
 
@@ -241,33 +224,29 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         except Exception:
             _LOGGER.exception("Failed to control entities %s", entities)
 
-    def _recover_activity_history(self) -> None:
-        """Try to recover activity history from the existing sensor state.
+    async def _async_load_history(self) -> None:
+        """Load activity history from persistent storage."""
+        try:
+            data = await self._store.async_load()
+            if data and isinstance(data.get("activity_history"), list):
+                self._activity_history = data["activity_history"]
+                _LOGGER.info(
+                    "Loaded %d activity history entries from storage",
+                    len(self._activity_history),
+                )
+            else:
+                _LOGGER.debug("No previous activity history found in storage")
+        except Exception:
+            _LOGGER.exception("Failed to load activity history from storage")
 
-        This provides soft persistence across HA restarts without file storage.
-        """
-        from homeassistant.helpers import entity_registry as er
-
-        registry = er.async_get(self.hass)
-
-        for state in self.hass.states.async_all("sensor"):
-            if state.attributes.get("recent_activity_history") is not None:
-                entity_entry = registry.async_get(state.entity_id)
-                if (
-                    entity_entry
-                    and entity_entry.config_entry_id == self.config_entry.entry_id
-                ):
-                    history = state.attributes.get("recent_activity_history", [])
-                    if isinstance(history, list) and history:
-                        self._activity_history = list(history)
-                        _LOGGER.info(
-                            "Recovered %d activity history entries from %s",
-                            len(history),
-                            state.entity_id,
-                        )
-                    return
-
-        _LOGGER.debug("No previous activity history found to recover")
+    async def _async_save_history(self) -> None:
+        """Save activity history to persistent storage."""
+        try:
+            await self._store.async_save(
+                {"activity_history": self._activity_history}
+            )
+        except Exception:
+            _LOGGER.exception("Failed to save activity history to storage")
 
     async def async_shutdown(self) -> None:
         """Clean up listeners."""

@@ -1,0 +1,73 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Konfigurera Power Saver",
+        "description": "Konfigurera en Power Saver-instans för en enhet. Du kan lägga till flera instanser för olika enheter.",
+        "data": {
+          "name": "Namn",
+          "nordpool_sensor": "Nordpool prissensor",
+          "min_hours": "Minsta antal aktiva timmar",
+          "always_cheap_price": "Alltid billigt prisgräns",
+          "always_expensive_price": "Alltid dyrt prisgräns",
+          "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
+          "controlled_entities": "Styrda entiteter"
+        },
+        "data_description": {
+          "name": "Ett beskrivande namn för denna instans (t.ex. 'Varmvattenberedare', 'Golvvärme').",
+          "nordpool_sensor": "Nordpool-sensorn som tillhandahåller priser för el.",
+          "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster. De billigaste tidsluckorna väljs.",
+          "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras, oavsett andra inställningar. Sätt till 0 för att inaktivera.",
+          "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. Sätt till 0 för att inaktivera.",
+          "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre värden förhindrar långa inaktiva perioder. 24 = optimera över hela dygnet.",
+          "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
+        }
+      }
+    },
+    "error": {
+      "invalid_nordpool_sensor": "Den valda sensorn verkar inte vara en Nordpool-sensor (saknar raw_today-attribut).",
+      "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad."
+    },
+    "abort": {
+      "already_configured": "Denna Power Saver-instans är redan konfigurerad."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Power Saver-inställningar",
+        "description": "Justera schemaläggningsparametrar. Ändringar träder i kraft omedelbart.",
+        "data": {
+          "min_hours": "Minsta antal aktiva timmar",
+          "always_cheap_price": "Alltid billigt prisgräns",
+          "always_expensive_price": "Alltid dyrt prisgräns",
+          "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
+          "controlled_entities": "Styrda entiteter"
+        },
+        "data_description": {
+          "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",
+          "always_cheap_price": "Pris under vilket tidsluckor alltid aktiveras. 0 = inaktiverat.",
+          "always_expensive_price": "Pris vid eller över vilket tidsluckor aldrig aktiveras. 0 = inaktiverat.",
+          "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre = jämnare fördelning. 24 = hela dygnet.",
+          "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status"
+      },
+      "schedule": {
+        "name": "Schema"
+      },
+      "last_active": {
+        "name": "Senast aktiv"
+      },
+      "active_hours_in_window": {
+        "name": "Aktiva timmar i fönster"
+      }
+    }
+  }
+}
