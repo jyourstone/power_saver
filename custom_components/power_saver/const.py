@@ -11,6 +11,7 @@ CONF_MIN_HOURS = "min_hours"
 CONF_ALWAYS_CHEAP = "always_cheap_price"
 CONF_ALWAYS_EXPENSIVE = "always_expensive_price"
 CONF_ROLLING_WINDOW_HOURS = "rolling_window_hours"
+CONF_CONTROLLED_ENTITIES = "controlled_entities"
 
 # Defaults
 DEFAULT_MIN_HOURS = 2.5

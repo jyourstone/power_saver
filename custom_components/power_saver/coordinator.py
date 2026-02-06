@@ -12,9 +12,12 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from homeassistant.const import SERVICE_TURN_OFF, SERVICE_TURN_ON
+
 from .const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
+    CONF_CONTROLLED_ENTITIES,
     CONF_MIN_HOURS,
     CONF_NORDPOOL_SENSOR,
     CONF_ROLLING_WINDOW_HOURS,
@@ -68,6 +71,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._activity_history: list[str] = []
         self._history_recovered = False
         self._unsub_nordpool: callback | None = None
+        self._previous_state: str | None = None
 
     async def _async_setup(self) -> None:
         """Set up the coordinator (called once on first refresh)."""
@@ -196,6 +200,11 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
 
+        # Control entities on state change
+        if current_state != self._previous_state:
+            await self._control_entities(current_state)
+            self._previous_state = current_state
+
         return PowerSaverData(
             schedule=schedule,
             current_state=current_state,
@@ -210,6 +219,27 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             activity_history=self._activity_history,
             emergency_mode=False,
         )
+
+    async def _control_entities(self, new_state: str) -> None:
+        """Turn controlled entities on/off based on the new state."""
+        entities = self.config_entry.options.get(CONF_CONTROLLED_ENTITIES, [])
+        if not entities:
+            return
+
+        service = SERVICE_TURN_ON if new_state == STATE_ACTIVE else SERVICE_TURN_OFF
+        _LOGGER.info(
+            "State changed to %s, calling homeassistant.%s for %s",
+            new_state, service, entities,
+        )
+
+        try:
+            await self.hass.services.async_call(
+                "homeassistant",
+                service,
+                {"entity_id": entities},
+            )
+        except Exception:
+            _LOGGER.exception("Failed to control entities %s", entities)
 
     def _recover_activity_history(self) -> None:
         """Try to recover activity history from the existing sensor state.

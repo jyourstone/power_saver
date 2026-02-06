@@ -26,6 +26,7 @@ from homeassistant.util import slugify
 from .const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
+    CONF_CONTROLLED_ENTITIES,
     CONF_MIN_HOURS,
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
@@ -76,6 +77,15 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=0, max=48, step=0.5, mode=NumberSelectorMode.BOX
+                )
+            ),
+            vol.Optional(
+                CONF_CONTROLLED_ENTITIES,
+                default=defaults.get(CONF_CONTROLLED_ENTITIES, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=["switch", "input_boolean", "light"],
+                    multiple=True,
                 )
             ),
         }
@@ -129,6 +139,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ALWAYS_CHEAP: user_input[CONF_ALWAYS_CHEAP],
                     CONF_ALWAYS_EXPENSIVE: user_input[CONF_ALWAYS_EXPENSIVE],
                     CONF_ROLLING_WINDOW_HOURS: user_input[CONF_ROLLING_WINDOW_HOURS],
+                    CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
                 }
 
                 return self.async_create_entry(
