@@ -12,6 +12,17 @@ from datetime import datetime, timedelta
 _LOGGER = logging.getLogger(__name__)
 
 
+def _to_datetime(value: str | datetime) -> datetime:
+    """Convert a value to a datetime, handling both strings and datetime objects.
+
+    Nordpool stores start/end as datetime objects when accessed via hass.states.get(),
+    but as ISO strings when accessed via the WebSocket API (e.g., AppDaemon).
+    """
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
+
+
 def build_schedule(
     raw_today: list[dict],
     raw_tomorrow: list[dict],
@@ -77,7 +88,7 @@ def build_schedule(
 
     for slot in sorted_today:
         try:
-            start = datetime.fromisoformat(slot.get("start")).astimezone(now.tzinfo)
+            start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
             price = float(slot.get("value", 0))
 
             is_active = (
@@ -109,7 +120,7 @@ def build_schedule(
 
         for slot in sorted_tomorrow:
             try:
-                start = datetime.fromisoformat(slot.get("start")).astimezone(now.tzinfo)
+                start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
                 price = float(slot.get("value", 0))
 
                 is_active = (
