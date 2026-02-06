@@ -147,6 +147,7 @@ async def _async_fetch_native_date(
         _LOGGER.debug(
             "Failed to fetch native Nordpool prices for %s (may not be available yet)",
             target_date,
+            exc_info=True,
         )
         return []
 
@@ -167,7 +168,7 @@ def _convert_native_response(response: dict) -> list[dict]:
 
     if isinstance(response, dict):
         # Grouped by area — pick the first area
-        for area, prices in response.items():
+        for _area, prices in response.items():
             if isinstance(prices, list):
                 price_list = prices
                 break

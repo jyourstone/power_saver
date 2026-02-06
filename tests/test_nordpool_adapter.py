@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from custom_components.power_saver.nordpool_adapter import _convert_native_response
-
-TZ = timezone(timedelta(hours=1), name="CET")
 
 
 class TestConvertNativeResponse:
@@ -175,9 +173,11 @@ class TestConvertNativeResponse:
         """Converting a full day of 24 hourly prices should work."""
         prices = []
         for hour in range(24):
+            start_dt = datetime(2026, 2, 6, hour, tzinfo=timezone(timedelta(hours=1)))
+            end_dt = start_dt + timedelta(hours=1)
             prices.append({
-                "start": f"2026-02-06T{hour:02d}:00:00+01:00",
-                "end": f"2026-02-06T{hour + 1 if hour < 23 else 0:02d}:00:00+01:00",
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
                 "price": 100.0 + hour * 10,  # 100-330 SEK/MWh
             })
 
