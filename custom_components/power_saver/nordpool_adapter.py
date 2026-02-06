@@ -6,6 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
@@ -43,17 +44,21 @@ def auto_detect_nordpool(
     Returns:
         Tuple of (entity_id, nordpool_type) or (None, None) if not found.
     """
-    # Check for HACS nordpool: any sensor with raw_today attribute
-    for state in hass.states.async_all("sensor"):
-        if state.attributes.get("raw_today") is not None:
-            _LOGGER.debug("Auto-detected HACS Nordpool sensor: %s", state.entity_id)
-            return state.entity_id, NORDPOOL_TYPE_HACS
+    registry = er.async_get(hass)
+
+    # Check for HACS nordpool: nordpool platform sensor with raw_today attribute
+    for entity_entry in registry.entities.values():
+        if entity_entry.domain != "sensor" or entity_entry.platform != "nordpool":
+            continue
+        state = hass.states.get(entity_entry.entity_id)
+        if state is not None and state.attributes.get("raw_today") is not None:
+            _LOGGER.debug("Auto-detected HACS Nordpool sensor: %s", entity_entry.entity_id)
+            return entity_entry.entity_id, NORDPOOL_TYPE_HACS
 
     # Check for native nordpool: config entry with domain "nordpool"
     entries = hass.config_entries.async_entries("nordpool")
     if entries:
         config_entry = entries[0]
-        registry = er.async_get(hass)
         entity_entries = er.async_entries_for_config_entry(
             registry, config_entry.entry_id
         )
@@ -143,7 +148,7 @@ async def _async_fetch_native_date(
             blocking=True,
             return_response=True,
         )
-    except Exception:
+    except (HomeAssistantError, KeyError, ValueError):
         _LOGGER.debug(
             "Failed to fetch native Nordpool prices for %s (may not be available yet)",
             target_date,
@@ -171,6 +176,7 @@ def _convert_native_response(response: dict) -> list[dict]:
         for _area, prices in response.items():
             if isinstance(prices, list):
                 price_list = prices
+                _LOGGER.debug("Using prices from area: %s", _area)
                 break
     elif isinstance(response, list):
         price_list = response
@@ -194,12 +200,14 @@ def _convert_native_response(response: dict) -> list[dict]:
 
             # If no explicit end, assume 1-hour slots
             if end is None:
-                if isinstance(start, datetime):
-                    end = start + timedelta(hours=1)
-                elif isinstance(start, str):
-                    end = (
-                        datetime.fromisoformat(start) + timedelta(hours=1)
-                    ).isoformat()
+                start_dt = (
+                    start
+                    if isinstance(start, datetime)
+                    else datetime.fromisoformat(start)
+                )
+                end_dt = start_dt + timedelta(hours=1)
+                # Preserve the same type as start
+                end = end_dt if isinstance(start, datetime) else end_dt.isoformat()
 
             converted.append({
                 "start": start,
