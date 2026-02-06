@@ -1,19 +1,44 @@
-"""Tests for the Power Saver scheduling algorithm."""
+"""Tests for the Power Saver scheduling algorithm.
+
+These tests import scheduler.py directly (without going through the
+custom_components package __init__.py) so they can run without homeassistant
+installed.
+"""
 
 from __future__ import annotations
 
+import importlib
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
-from custom_components.power_saver.scheduler import (
-    build_activity_history,
-    build_schedule,
-    find_current_slot,
-    find_next_change,
-)
+# Import scheduler directly to avoid triggering __init__.py which needs homeassistant
+_scheduler_path = Path(__file__).resolve().parent.parent / "custom_components" / "power_saver"
+sys.path.insert(0, str(_scheduler_path))
+import scheduler  # noqa: E402
 
-from .conftest import TZ, make_nordpool_slot
+build_schedule = scheduler.build_schedule
+find_current_slot = scheduler.find_current_slot
+find_next_change = scheduler.find_next_change
+build_activity_history = scheduler.build_activity_history
+
+# TZ and make_nordpool_slot are defined in conftest.py, which pytest loads
+# automatically. We just need to define them here for direct use in tests.
+TZ = timezone(timedelta(hours=1), name="CET")
+
+
+def make_nordpool_slot(hour: int, price: float, day_offset: int = 0) -> dict:
+    """Create a Nordpool-style price slot for testing."""
+    base = datetime(2026, 2, 6, tzinfo=TZ) + timedelta(days=day_offset)
+    start = base.replace(hour=hour, minute=0, second=0, microsecond=0)
+    end = start + timedelta(hours=1)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "value": price,
+    }
 
 
 class TestBuildSchedule:

@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-# Timezone for testing (CET/CEST)
-TZ = timezone(timedelta(hours=1))
+# Timezone for testing (CET)
+TZ = timezone(timedelta(hours=1), name="CET")
 
 
 def make_nordpool_slot(hour: int, price: float, day_offset: int = 0) -> dict:
