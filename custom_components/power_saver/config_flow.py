@@ -10,7 +10,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlowWithReload,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
@@ -91,7 +91,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> PowerSaverOptionsFlow:
         """Get the options flow for this handler."""
-        return PowerSaverOptionsFlow(config_entry)
+        return PowerSaverOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -154,7 +154,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-class PowerSaverOptionsFlow(OptionsFlowWithConfigEntry):
+class PowerSaverOptionsFlow(OptionsFlowWithReload):
     """Handle options flow for Power Saver."""
 
     async def async_step_init(
@@ -180,5 +180,5 @@ class PowerSaverOptionsFlow(OptionsFlowWithConfigEntry):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_options_schema(self.options),
+            data_schema=_options_schema(self.config_entry.options),
         )
