@@ -10,8 +10,12 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithReload,
 )
+
+try:
+    from homeassistant.config_entries import OptionsFlowWithReload
+except ImportError:
+    from homeassistant.config_entries import OptionsFlowWithConfigEntry as OptionsFlowWithReload
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
@@ -76,7 +80,7 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 default=defaults.get(CONF_ROLLING_WINDOW_HOURS, DEFAULT_ROLLING_WINDOW_HOURS),
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=0, max=48, step=0.5, mode=NumberSelectorMode.BOX
+                    min=1, max=48, step=0.5, mode=NumberSelectorMode.BOX
                 )
             ),
             vol.Optional(
@@ -115,12 +119,6 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
             state = self.hass.states.get(nordpool_entity)
             if state is None or state.attributes.get("raw_today") is None:
                 errors["nordpool_sensor"] = "invalid_nordpool_sensor"
-
-            # Validate rolling window config
-            rolling_window = user_input.get(CONF_ROLLING_WINDOW_HOURS, 0)
-            min_hours = user_input.get(CONF_MIN_HOURS, 0)
-            if rolling_window > 0 and min_hours <= 0:
-                errors["rolling_window_hours"] = "invalid_rolling_window"
 
             if not errors:
                 # Set unique ID to prevent duplicates
@@ -173,21 +171,7 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Validate rolling window config
-            errors: dict[str, str] = {}
-            rolling_window = user_input.get(CONF_ROLLING_WINDOW_HOURS, 0)
-            min_hours = user_input.get(CONF_MIN_HOURS, 0)
-            if rolling_window > 0 and min_hours <= 0:
-                errors["rolling_window_hours"] = "invalid_rolling_window"
-
-            if not errors:
-                return self.async_create_entry(data=user_input)
-
-            return self.async_show_form(
-                step_id="init",
-                data_schema=_options_schema(user_input),
-                errors=errors,
-            )
+            return self.async_create_entry(data=user_input)
 
         return self.async_show_form(
             step_id="init",
