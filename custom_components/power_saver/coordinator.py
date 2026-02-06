@@ -21,17 +21,20 @@ from .const import (
     CONF_CONTROLLED_ENTITIES,
     CONF_MIN_HOURS,
     CONF_NORDPOOL_SENSOR,
+    CONF_NORDPOOL_TYPE,
     CONF_ROLLING_WINDOW_HOURS,
     DEFAULT_ALWAYS_CHEAP,
     DEFAULT_ALWAYS_EXPENSIVE,
     DEFAULT_MIN_HOURS,
     DEFAULT_ROLLING_WINDOW_HOURS,
     DOMAIN,
+    NORDPOOL_TYPE_HACS,
     STATE_ACTIVE,
     STATE_STANDBY,
     UPDATE_INTERVAL_MINUTES,
 )
 from . import scheduler
+from .nordpool_adapter import async_get_prices
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +71,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             update_interval=timedelta(minutes=UPDATE_INTERVAL_MINUTES),
         )
         self._nordpool_entity = entry.data[CONF_NORDPOOL_SENSOR]
+        self._nordpool_type = entry.data.get(CONF_NORDPOOL_TYPE, NORDPOOL_TYPE_HACS)
         self._store = Store(hass, STORAGE_VERSION, f"power_saver.{entry.entry_id}")
         self._activity_history: list[str] = []
         self._history_loaded = False
@@ -98,8 +102,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 f"Nordpool sensor {self._nordpool_entity} not available"
             )
 
-        raw_today = nordpool_state.attributes.get("raw_today") or []
-        raw_tomorrow = nordpool_state.attributes.get("raw_tomorrow") or []
+        raw_today, raw_tomorrow = await async_get_prices(
+            self.hass, self._nordpool_entity, self._nordpool_type
+        )
 
         # Read options
         options = self.config_entry.options

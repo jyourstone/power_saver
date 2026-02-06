@@ -34,6 +34,7 @@ from .const import (
     CONF_MIN_HOURS,
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
+    CONF_NORDPOOL_TYPE,
     CONF_ROLLING_WINDOW_HOURS,
     DEFAULT_ALWAYS_CHEAP,
     DEFAULT_ALWAYS_EXPENSIVE,
@@ -41,6 +42,7 @@ from .const import (
     DEFAULT_ROLLING_WINDOW_HOURS,
     DOMAIN,
 )
+from .nordpool_adapter import auto_detect_nordpool
 
 
 def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -114,11 +116,10 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate Nordpool sensor
-            nordpool_entity = user_input[CONF_NORDPOOL_SENSOR]
-            state = self.hass.states.get(nordpool_entity)
-            if state is None or state.attributes.get("raw_today") is None:
-                errors["nordpool_sensor"] = "invalid_nordpool_sensor"
+            # Auto-detect Nordpool sensor
+            nordpool_entity, nordpool_type = auto_detect_nordpool(self.hass)
+            if nordpool_entity is None:
+                errors["base"] = "nordpool_not_found"
 
             if not errors:
                 # Set unique ID to prevent duplicates
@@ -130,6 +131,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Split data (immutable) and options (mutable)
                 data = {
                     CONF_NORDPOOL_SENSOR: nordpool_entity,
+                    CONF_NORDPOOL_TYPE: nordpool_type,
                     CONF_NAME: name,
                 }
                 options = {
@@ -146,13 +148,10 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     options=options,
                 )
 
-        # Build the full schema (data + options fields)
+        # Build the schema (name + options fields, no sensor picker)
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME): TextSelector(),
-                vol.Required(CONF_NORDPOOL_SENSOR): EntitySelector(
-                    EntitySelectorConfig(domain="sensor")
-                ),
             }
         ).extend(_options_schema().schema)
 

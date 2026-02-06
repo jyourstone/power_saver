@@ -8,14 +8,20 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
 from custom_components.power_saver.const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
     CONF_MIN_HOURS,
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
+    CONF_NORDPOOL_TYPE,
     CONF_ROLLING_WINDOW_HOURS,
     DOMAIN,
+    NORDPOOL_TYPE_HACS,
+    NORDPOOL_TYPE_NATIVE,
 )
 
 NORDPOOL_ENTITY = "sensor.nordpool_kwh_se4_sek"
@@ -28,8 +34,8 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture
-def setup_nordpool(hass: HomeAssistant):
-    """Set up a fake Nordpool sensor with raw_today attribute."""
+def setup_hacs_nordpool(hass: HomeAssistant):
+    """Set up a fake HACS Nordpool sensor with raw_today attribute."""
     hass.states.async_set(
         NORDPOOL_ENTITY,
         "0.50",
@@ -46,8 +52,34 @@ def setup_nordpool(hass: HomeAssistant):
     )
 
 
-async def test_full_config_flow(hass: HomeAssistant, setup_nordpool):
-    """Test a successful config flow."""
+@pytest.fixture
+async def setup_native_nordpool(hass: HomeAssistant):
+    """Set up a fake native Nordpool integration with config entry and entity."""
+    # Create a mock config entry for the nordpool domain
+    nordpool_config_entry = MockConfigEntry(
+        domain="nordpool",
+        title="Nord Pool",
+        entry_id="nordpool_test_entry",
+    )
+    nordpool_config_entry.add_to_hass(hass)
+
+    # Register a sensor entity belonging to that config entry
+    registry = er.async_get(hass)
+    entity_entry = registry.async_get_or_create(
+        domain="sensor",
+        platform="nordpool",
+        unique_id="se4_sek_current_price",
+        suggested_object_id="nordpool_se4_sek_current_price",
+        config_entry=nordpool_config_entry,
+    )
+    hass.states.async_set(
+        entity_entry.entity_id, "0.45", {"unit_of_measurement": "SEK/kWh"}
+    )
+    return entity_entry
+
+
+async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
+    """Test a successful config flow with HACS Nordpool auto-detected."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -59,7 +91,6 @@ async def test_full_config_flow(hass: HomeAssistant, setup_nordpool):
         result["flow_id"],
         {
             CONF_NAME: "Water Heater",
-            CONF_NORDPOOL_SENSOR: NORDPOOL_ENTITY,
             CONF_MIN_HOURS: 6.0,
             CONF_ALWAYS_CHEAP: 0.05,
             CONF_ALWAYS_EXPENSIVE: 2.0,
@@ -71,6 +102,7 @@ async def test_full_config_flow(hass: HomeAssistant, setup_nordpool):
     assert result["title"] == "Water Heater"
     assert result["data"] == {
         CONF_NORDPOOL_SENSOR: NORDPOOL_ENTITY,
+        CONF_NORDPOOL_TYPE: NORDPOOL_TYPE_HACS,
         CONF_NAME: "Water Heater",
     }
     assert result["options"][CONF_MIN_HOURS] == 6.0
@@ -79,11 +111,30 @@ async def test_full_config_flow(hass: HomeAssistant, setup_nordpool):
     assert result["options"][CONF_ROLLING_WINDOW_HOURS] == 24.0
 
 
-async def test_invalid_nordpool_sensor(hass: HomeAssistant):
-    """Test validation when Nordpool sensor is missing raw_today."""
-    # State exists but has no raw_today attribute
-    hass.states.async_set("sensor.bad_sensor", "0.0", {})
+async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpool):
+    """Test a successful config flow with native Nordpool auto-detected."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
 
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Floor Heating",
+            CONF_MIN_HOURS: 4.0,
+            CONF_ALWAYS_CHEAP: 0.0,
+            CONF_ALWAYS_EXPENSIVE: 0.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE
+    assert result["data"][CONF_NORDPOOL_SENSOR] == setup_native_nordpool.entity_id
+
+
+async def test_no_nordpool_found(hass: HomeAssistant):
+    """Test validation when no Nordpool integration is present."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -92,7 +143,6 @@ async def test_invalid_nordpool_sensor(hass: HomeAssistant):
         result["flow_id"],
         {
             CONF_NAME: "Test",
-            CONF_NORDPOOL_SENSOR: "sensor.bad_sensor",
             CONF_MIN_HOURS: 2.5,
             CONF_ALWAYS_CHEAP: 0.0,
             CONF_ALWAYS_EXPENSIVE: 0.0,
@@ -101,4 +151,5 @@ async def test_invalid_nordpool_sensor(hass: HomeAssistant):
     )
 
     assert result["type"] is FlowResultType.FORM
-    assert "nordpool_sensor" in result["errors"]
+    assert "base" in result["errors"]
+    assert result["errors"]["base"] == "nordpool_not_found"

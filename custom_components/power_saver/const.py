@@ -4,7 +4,12 @@ DOMAIN = "power_saver"
 
 # Config entry data keys (immutable after creation)
 CONF_NORDPOOL_SENSOR = "nordpool_sensor"
+CONF_NORDPOOL_TYPE = "nordpool_type"
 CONF_NAME = "name"
+
+# Nordpool sensor types
+NORDPOOL_TYPE_HACS = "hacs"
+NORDPOOL_TYPE_NATIVE = "native"
 
 # Options keys (changeable via options flow)
 CONF_MIN_HOURS = "min_hours"
