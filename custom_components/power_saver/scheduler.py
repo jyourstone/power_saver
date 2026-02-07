@@ -38,6 +38,7 @@ def _compute_similarity_threshold(
         return None
     anchor_price = float(sorted_slots[0].get("value", 0))
     if anchor_price == 0:
+        _LOGGER.debug("Price similarity disabled: anchor price is 0")
         return None
     offset = (price_similarity_pct / 100) * abs(anchor_price)
     if inverted:
