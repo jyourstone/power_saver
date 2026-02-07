@@ -10,6 +10,7 @@
           "always_cheap_price": "Always-cheap price threshold",
           "always_expensive_price": "Always-expensive price threshold",
           "rolling_window_hours": "Rolling window size (hours)",
+          "price_similarity_pct": "Price similarity threshold",
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
@@ -18,6 +19,7 @@
           "always_cheap_price": "Price below which the slot is always activated, regardless of other settings. Set to 0 to disable.",
           "always_expensive_price": "Price at or above which the slot is never activated (safety cutoff). Set to 0 to disable.",
           "rolling_window_hours": "Time window in hours to spread active slots across. Smaller values prevent long inactive gaps. 24 = optimize across the full day.",
+          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. For example, 20% means any slot up to 1.2x the cheapest price is also activated. Useful on flat-price days. 0 = disabled.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
       }
@@ -40,6 +42,7 @@
           "always_cheap_price": "Always-cheap price threshold",
           "always_expensive_price": "Always-expensive price threshold",
           "rolling_window_hours": "Rolling window size (hours)",
+          "price_similarity_pct": "Price similarity threshold",
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
@@ -47,6 +50,7 @@
           "always_cheap_price": "Price below which slots are always activated. 0 = disabled.",
           "always_expensive_price": "Price at or above which slots are never activated. 0 = disabled.",
           "rolling_window_hours": "Time window in hours to spread active slots across. Smaller = more evenly spread. 24 = full day.",
+          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. 0 = disabled.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
       }

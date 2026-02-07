@@ -35,10 +35,12 @@ from .const import (
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
     CONF_NORDPOOL_TYPE,
+    CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
     DEFAULT_ALWAYS_CHEAP,
     DEFAULT_ALWAYS_EXPENSIVE,
     DEFAULT_MIN_HOURS,
+    DEFAULT_PRICE_SIMILARITY_PCT,
     DEFAULT_ROLLING_WINDOW_HOURS,
     DOMAIN,
 )
@@ -83,6 +85,15 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=1, max=48, step=0.5, mode=NumberSelectorMode.BOX
+                )
+            ),
+            vol.Required(
+                CONF_PRICE_SIMILARITY_PCT,
+                default=defaults.get(CONF_PRICE_SIMILARITY_PCT, DEFAULT_PRICE_SIMILARITY_PCT),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=100, step=1, mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="%",
                 )
             ),
             vol.Optional(
@@ -139,6 +150,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ALWAYS_CHEAP: user_input[CONF_ALWAYS_CHEAP],
                     CONF_ALWAYS_EXPENSIVE: user_input[CONF_ALWAYS_EXPENSIVE],
                     CONF_ROLLING_WINDOW_HOURS: user_input[CONF_ROLLING_WINDOW_HOURS],
+                    CONF_PRICE_SIMILARITY_PCT: user_input[CONF_PRICE_SIMILARITY_PCT],
                     CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
                 }
 

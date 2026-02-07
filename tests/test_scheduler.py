@@ -213,6 +213,130 @@ class TestBuildSchedule:
         assert len(schedule) == 24
 
 
+class TestPriceSimilarityThreshold:
+    """Tests for the price similarity threshold feature."""
+
+    def test_threshold_activates_extra_slots(self, now):
+        """Slots within the threshold percentage of the cheapest should be activated."""
+        # Flat prices: all between 0.10 and 0.13
+        prices = [make_nordpool_slot(h, 0.10 + (h % 4) * 0.01) for h in range(24)]
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=2.5,  # 10 slots normally
+            always_cheap=0.0,
+            always_expensive=0.0,
+            rolling_window_hours=None,
+            now=now,
+            price_similarity_pct=20.0,  # 20% of 0.10 = threshold 0.12
+        )
+
+        active = [s for s in schedule if s["status"] == "active"]
+        # Should activate more than the 10 minimum slots
+        # Slots with price <= 0.12 should all be active (0.10, 0.11, 0.12)
+        assert len(active) > 10
+        # Slots at 0.13 should NOT be active (0.13 > 0.12)
+        for s in schedule:
+            if s["price"] == 0.13:
+                assert s["status"] == "standby"
+
+    def test_threshold_disabled_when_zero(self, now, today_prices):
+        """When threshold is 0, only min_hours worth of cheapest slots activate."""
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            always_cheap=0.0,
+            always_expensive=0.0,
+            rolling_window_hours=None,
+            now=now,
+            price_similarity_pct=0.0,
+        )
+
+        active = [s for s in schedule if s["status"] == "active"]
+        assert len(active) == 10  # Exactly min_hours * 4
+
+    def test_threshold_respects_always_expensive(self, now):
+        """Threshold should not activate slots above always_expensive."""
+        # All prices clustered around 0.50
+        prices = [make_nordpool_slot(h, 0.50 + h * 0.01) for h in range(24)]
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,  # 4 slots
+            always_cheap=0.0,
+            always_expensive=0.55,  # Hard cutoff
+            rolling_window_hours=None,
+            now=now,
+            price_similarity_pct=50.0,  # Would expand to 0.75 but capped by always_expensive
+        )
+
+        # No slot at or above 0.55 should be active
+        for s in schedule:
+            if s["price"] >= 0.55:
+                assert s["status"] == "standby"
+
+    def test_threshold_skipped_for_negative_prices(self, now):
+        """When cheapest price is <= 0, threshold should not apply."""
+        prices = [make_nordpool_slot(h, -0.05 + h * 0.05) for h in range(24)]
+        schedule_with_threshold = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            always_cheap=0.0,
+            always_expensive=0.0,
+            rolling_window_hours=None,
+            now=now,
+            price_similarity_pct=50.0,
+        )
+        schedule_without_threshold = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            always_cheap=0.0,
+            always_expensive=0.0,
+            rolling_window_hours=None,
+            now=now,
+            price_similarity_pct=0.0,
+        )
+
+        # Both should have the same number of active slots
+        active_with = sum(1 for s in schedule_with_threshold if s["status"] == "active")
+        active_without = sum(1 for s in schedule_without_threshold if s["status"] == "active")
+        assert active_with == active_without
+
+    def test_threshold_applies_to_tomorrow_independently(self, now):
+        """Tomorrow should use its own cheapest price for threshold calculation."""
+        today = [make_nordpool_slot(h, 0.10) for h in range(24)]  # All 0.10
+        tomorrow = [make_nordpool_slot(h, 0.50 + h * 0.01, day_offset=1) for h in range(24)]
+
+        schedule = build_schedule(
+            raw_today=today,
+            raw_tomorrow=tomorrow,
+            min_hours=0.25,  # 1 slot quota only
+            always_cheap=0.0,
+            always_expensive=0.0,
+            rolling_window_hours=None,
+            now=now,
+            price_similarity_pct=10.0,  # 10% of 0.50 = threshold at 0.55 for tomorrow
+        )
+
+        tomorrow_base = datetime(2026, 2, 7, tzinfo=TZ)
+        tomorrow_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(TZ).date() == tomorrow_base.date()
+        ]
+
+        # Tomorrow's threshold: 0.50 * 1.10 = 0.55
+        # Slots 0.50-0.55 (hours 0-5) should be active = 6 slots
+        # More than just the 1 min_hours slot
+        assert len(tomorrow_active) == 6
+        # All active tomorrow slots should be <= 0.55
+        for s in tomorrow_active:
+            assert s["price"] <= 0.55
+
+
 class TestRollingWindowConstraint:
     """Tests for the rolling window constraint."""
 

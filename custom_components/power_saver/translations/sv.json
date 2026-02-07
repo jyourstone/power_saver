@@ -3,21 +3,23 @@
     "step": {
       "user": {
         "title": "Konfigurera Power Saver",
-        "description": "Konfigurera en Power Saver-instans för en enhet. Nordpool-sensorn upptäcks automatiskt (HACS eller inbyggd). Du kan lägga till flera instanser för olika enheter.",
+        "description": "Konfigurera en Power Saver integrationspost för en enhet. Nordpool-sensorn upptäcks automatiskt (HACS eller inbyggd). Du kan lägga till flera poster för olika enheter.",
         "data": {
           "name": "Namn",
           "min_hours": "Minsta antal aktiva timmar",
           "always_cheap_price": "Alltid billigt prisgräns",
           "always_expensive_price": "Alltid dyrt prisgräns",
           "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
+          "price_similarity_pct": "Prislikhetströskel",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
-          "name": "Ett beskrivande namn för denna instans (t.ex. 'Varmvattenberedare', 'Golvvärme').",
+          "name": "Ett beskrivande namn för denna integrationspost (t.ex. 'Varmvattenberedare', 'Golvvärme').",
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster. De billigaste tidsluckorna väljs.",
           "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras, oavsett andra inställningar. Sätt till 0 för att inaktivera.",
           "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. Sätt till 0 för att inaktivera.",
           "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre värden förhindrar långa inaktiva perioder. 24 = optimera över hela dygnet.",
+          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. T.ex. 20 % innebär att tidsluckor upp till 1,2x billigaste priset också aktiveras. Användbart vid jämna priser. 0 = inaktiverat.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
       }
@@ -27,7 +29,7 @@
       "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad."
     },
     "abort": {
-      "already_configured": "Denna Power Saver-instans är redan konfigurerad."
+      "already_configured": "Denna Power Saver-integrationspost är redan konfigurerad."
     }
   },
   "options": {
@@ -40,6 +42,7 @@
           "always_cheap_price": "Alltid billigt prisgräns",
           "always_expensive_price": "Alltid dyrt prisgräns",
           "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
+          "price_similarity_pct": "Prislikhetströskel",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
@@ -47,6 +50,7 @@
           "always_cheap_price": "Pris under vilket tidsluckor alltid aktiveras. 0 = inaktiverat.",
           "always_expensive_price": "Pris vid eller över vilket tidsluckor aldrig aktiveras. 0 = inaktiverat.",
           "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre = jämnare fördelning. 24 = hela dygnet.",
+          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. 0 = inaktiverat.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
       }

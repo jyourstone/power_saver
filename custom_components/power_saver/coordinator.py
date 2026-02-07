@@ -22,10 +22,12 @@ from .const import (
     CONF_MIN_HOURS,
     CONF_NORDPOOL_SENSOR,
     CONF_NORDPOOL_TYPE,
+    CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
     DEFAULT_ALWAYS_CHEAP,
     DEFAULT_ALWAYS_EXPENSIVE,
     DEFAULT_MIN_HOURS,
+    DEFAULT_PRICE_SIMILARITY_PCT,
     DEFAULT_ROLLING_WINDOW_HOURS,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
@@ -115,6 +117,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             CONF_ROLLING_WINDOW_HOURS, DEFAULT_ROLLING_WINDOW_HOURS
         )
         rolling_window = rolling_window_hours
+        price_similarity_pct = options.get(
+            CONF_PRICE_SIMILARITY_PCT, DEFAULT_PRICE_SIMILARITY_PCT
+        )
 
         # Load activity history from persistent storage on first run
         if not self._history_loaded:
@@ -162,6 +167,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             rolling_window_hours=rolling_window,
             now=now,
             prev_activity_history=self._activity_history,
+            price_similarity_pct=price_similarity_pct,
         )
 
         # Find current slot

@@ -32,12 +32,15 @@ def build_schedule(
     rolling_window_hours: float | None,
     now: datetime,
     prev_activity_history: list[str] | None = None,
+    price_similarity_pct: float = 0.0,
 ) -> list[dict]:
     """Build a schedule from Nordpool price data.
 
     Activation logic:
     - Activate the cheapest slots up to min_hours (converted to 15-min slots)
     - Activate any slots with price <= always_cheap regardless of quota
+    - If price_similarity_pct > 0, also activate slots within that percentage
+      of the cheapest price (e.g. 20% means slots up to 1.2x the cheapest)
     - Never activate if price >= always_expensive (safety cutoff, disabled if <= 0)
     - If rolling window constraint is enabled, additional slots are activated as needed
 
@@ -50,6 +53,8 @@ def build_schedule(
         rolling_window_hours: Rolling window size in hours. None or 0 = disabled.
         now: Current datetime (timezone-aware).
         prev_activity_history: List of ISO timestamps of previously active slots.
+        price_similarity_pct: Percentage threshold for price similarity. Slots within
+            this percentage of the cheapest price are also activated. 0 = disabled.
 
     Returns:
         List of schedule dicts: [{"price": float, "time": str, "status": str}, ...]
@@ -82,17 +87,34 @@ def build_schedule(
             min_slots, always_cheap,
         )
 
+    # Compute price similarity threshold
+    use_similarity = price_similarity_pct > 0
+
     # Process today's slots (sorted by price, cheapest first)
     sorted_today = sorted(raw_today, key=lambda x: x.get("value", 999))
     activated_count = min_slots
+
+    # Calculate threshold price for today based on cheapest slot
+    today_threshold = None
+    if use_similarity and sorted_today:
+        min_price_today = float(sorted_today[0].get("value", 0))
+        if min_price_today > 0:
+            today_threshold = min_price_today * (1 + price_similarity_pct / 100)
+            _LOGGER.debug(
+                "Price similarity threshold for today: %.3f (cheapest: %.3f, pct: %.1f%%)",
+                today_threshold, min_price_today, price_similarity_pct,
+            )
 
     for slot in sorted_today:
         try:
             start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
             price = float(slot.get("value", 0))
 
+            is_within_threshold = (
+                today_threshold is not None and price <= today_threshold
+            )
             is_active = (
-                (price <= always_cheap or activated_count > 0)
+                (price <= always_cheap or activated_count > 0 or is_within_threshold)
                 and (not has_upper_limit or price < always_expensive)
             )
             status = "active" if is_active else "standby"
@@ -118,13 +140,27 @@ def build_schedule(
         if not use_rolling_window:
             activated_count = min_slots
 
+        # Calculate threshold price for tomorrow based on tomorrow's cheapest slot
+        tomorrow_threshold = None
+        if use_similarity and sorted_tomorrow:
+            min_price_tomorrow = float(sorted_tomorrow[0].get("value", 0))
+            if min_price_tomorrow > 0:
+                tomorrow_threshold = min_price_tomorrow * (1 + price_similarity_pct / 100)
+                _LOGGER.debug(
+                    "Price similarity threshold for tomorrow: %.3f (cheapest: %.3f, pct: %.1f%%)",
+                    tomorrow_threshold, min_price_tomorrow, price_similarity_pct,
+                )
+
         for slot in sorted_tomorrow:
             try:
                 start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
                 price = float(slot.get("value", 0))
 
+                is_within_threshold = (
+                    tomorrow_threshold is not None and price <= tomorrow_threshold
+                )
                 is_active = (
-                    (price <= always_cheap or activated_count > 0)
+                    (price <= always_cheap or activated_count > 0 or is_within_threshold)
                     and (not has_upper_limit or price < always_expensive)
                 )
                 status = "active" if is_active else "standby"
