@@ -52,6 +52,12 @@
 
 ## Configuration
 
+To add the integration to your Home Assistant instance, use the button below:
+
+[![Add integration to your Home Assistant instance.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=power_saver)
+
+Or add it manually:
+
 1. Go to **Settings** → **Devices & Services** → **Add Integration**
 2. Search for **Power Saver**
 3. Fill in the configuration:
