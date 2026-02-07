@@ -124,7 +124,7 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             ),
             _optional_number(CONF_MIN_CONSECUTIVE_HOURS, defaults): NumberSelector(
                 NumberSelectorConfig(
-                    min=1, max=24, step=1, mode=NumberSelectorMode.BOX,
+                    min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
                     unit_of_measurement="hours",
                 )
             ),
