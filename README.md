@@ -95,22 +95,20 @@ Each instance creates the following sensors:
 
 | Attribute | Description |
 |-----------|-------------|
-| `schedule` | Full schedule with all time slots, prices, and statuses |
 | `current_price` | Electricity price for the current time slot |
 | `min_price` | Lowest price today |
-| `next_change` | Timestamp of the next state transition |
+| `max_price` | Highest price today |
 | `active_slots` | Total number of active slots in the schedule |
-| `active_hours_in_window` | Hours of activity within the rolling window |
-| `hours_since_last_active` | Hours since the last active slot |
-| `emergency_mode` | `true` if running without price data |
 
 ### Diagnostic sensors
 
-| Sensor | Description |
-|--------|-------------|
-| **Schedule** | Full schedule as a diagnostic entity |
-| **Last Active** | Timestamp of the last active slot |
-| **Active Hours in Window** | Hours of activity within the rolling window |
+| Sensor | Type | Description |
+|--------|------|-------------|
+| **Schedule** | Sensor | Full schedule with all time slots, prices, and statuses |
+| **Last Active** | Sensor | Timestamp of the last active slot |
+| **Active Hours in Window** | Sensor | Hours of activity within the rolling window |
+| **Next Change** | Sensor | Timestamp of the next state transition (displayed as relative time) |
+| **Emergency Mode** | Binary sensor | Indicates if running without price data (problem badge) |
 
 ## How it works
 
