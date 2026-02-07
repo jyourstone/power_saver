@@ -29,6 +29,7 @@ async def async_setup_entry(
         ScheduleSensor(coordinator, entry),
         LastActiveSensor(coordinator, entry),
         ActiveHoursInWindowSensor(coordinator, entry),
+        NextChangeSensor(coordinator, entry),
     ])
 
 
@@ -62,8 +63,6 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
     @property
     def icon(self) -> str:
         """Return icon based on state."""
-        if self.coordinator.data and self.coordinator.data.emergency_mode:
-            return "mdi:alert-circle"
         if self.coordinator.data and self.coordinator.data.current_state == "active":
             return "mdi:power-plug"
         return "mdi:power-plug-off"
@@ -78,9 +77,7 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
             "current_price": data.current_price,
             "min_price": data.min_price,
             "max_price": data.max_price,
-            "next_change": data.next_change,
             "active_slots": data.active_slots,
-            "emergency_mode": data.emergency_mode,
         }
 
 
@@ -162,5 +159,22 @@ class ActiveHoursInWindowSensor(_DiagnosticBase):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.active_hours_in_window
+
+
+class NextChangeSensor(_DiagnosticBase):
+    """Diagnostic sensor showing when the next state change will occur."""
+
+    _attr_translation_key = "next_change"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return timestamp of next state change."""
+        if (
+            self.coordinator.data is None
+            or self.coordinator.data.next_change is None
+        ):
+            return None
+        return datetime.fromisoformat(self.coordinator.data.next_change)
 
 

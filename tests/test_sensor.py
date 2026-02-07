@@ -13,6 +13,7 @@ from custom_components.power_saver.coordinator import PowerSaverData
 from custom_components.power_saver.sensor import (
     ActiveHoursInWindowSensor,
     LastActiveSensor,
+    NextChangeSensor,
     PowerSaverSensor,
     ScheduleSensor,
 )
@@ -76,14 +77,6 @@ def test_status_sensor_icon_standby():
     assert sensor.icon == "mdi:power-plug-off"
 
 
-def test_status_sensor_icon_emergency():
-    """Test icon in emergency mode."""
-    coordinator = MagicMock()
-    coordinator.data = PowerSaverData(emergency_mode=True)
-    sensor = PowerSaverSensor(coordinator, _make_entry())
-    assert sensor.icon == "mdi:alert-circle"
-
-
 def test_status_sensor_attributes():
     """Test that main sensor exposes only user-facing attributes."""
     coordinator = MagicMock()
@@ -103,11 +96,11 @@ def test_status_sensor_attributes():
         "current_price": 0.1,
         "min_price": 0.03,
         "max_price": 0.60,
-        "next_change": "2026-02-06T11:00:00+01:00",
         "active_slots": 10,
-        "emergency_mode": False,
     }
     assert "schedule" not in attrs
+    assert "next_change" not in attrs
+    assert "emergency_mode" not in attrs
 
 
 def test_status_sensor_attributes_no_data():
@@ -227,6 +220,44 @@ def test_active_hours_in_window_sensor_native_value():
     assert sensor.native_value == 3.5
 
 
+# --- Next Change diagnostic sensor ---
+
+
+def test_next_change_sensor_device_class():
+    """Test next change sensor has timestamp device class."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = NextChangeSensor(coordinator, _make_entry())
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+
+
+def test_next_change_sensor_unique_id():
+    """Test next change sensor unique ID."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = NextChangeSensor(coordinator, _make_entry("abc"))
+    assert sensor.unique_id == "abc_next_change"
+
+
+def test_next_change_sensor_native_value():
+    """Test next change sensor returns parsed datetime."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(
+        next_change="2026-02-06T11:00:00+01:00"
+    )
+    sensor = NextChangeSensor(coordinator, _make_entry())
+    expected = datetime(2026, 2, 6, 11, 0, tzinfo=timezone(timedelta(hours=1)))
+    assert sensor.native_value == expected
+
+
+def test_next_change_sensor_no_data():
+    """Test next change sensor returns None when no data."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(next_change=None)
+    sensor = NextChangeSensor(coordinator, _make_entry())
+    assert sensor.native_value is None
+
+
 # --- All diagnostic sensors share base properties ---
 
 
@@ -240,6 +271,7 @@ def test_all_diagnostic_sensors_are_diagnostic():
         ScheduleSensor,
         LastActiveSensor,
         ActiveHoursInWindowSensor,
+        NextChangeSensor,
     ):
         sensor = cls(coordinator, entry)
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC, (

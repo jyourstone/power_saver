@@ -85,6 +85,14 @@
       },
       "active_hours_in_window": {
         "name": "Aktiva timmar i fönster"
+      },
+      "next_change": {
+        "name": "Nästa ändring"
+      }
+    },
+    "binary_sensor": {
+      "emergency_mode": {
+        "name": "Nödläge"
       }
     }
   }
