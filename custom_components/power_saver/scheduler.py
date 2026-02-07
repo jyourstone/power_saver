@@ -24,25 +24,30 @@ def _to_datetime(value: str | datetime) -> datetime:
 
 
 def _compute_similarity_threshold(
-    sorted_slots: list[dict], price_similarity_pct: float | None
+    sorted_slots: list[dict],
+    price_similarity_pct: float | None,
+    inverted: bool = False,
 ) -> float | None:
     """Compute the price similarity threshold for a day's slots.
 
-    Uses an additive offset based on the absolute value of the cheapest price,
-    which works correctly for both positive and negative prices.
-    For positive prices this is equivalent to: min_price * (1 + pct/100).
+    In normal mode: threshold is above the cheapest price (sorted_slots[0] when ascending).
+    In inverted mode: threshold is below the most expensive price (sorted_slots[0] when descending).
+    Uses an additive offset based on the absolute value of the anchor price.
     """
     if not sorted_slots or not price_similarity_pct or price_similarity_pct <= 0:
         return None
-    min_price = float(sorted_slots[0].get("value", 0))
-    if min_price == 0:
+    anchor_price = float(sorted_slots[0].get("value", 0))
+    if anchor_price == 0:
         return None
-    offset = (price_similarity_pct / 100) * abs(min_price)
-    threshold = min_price + offset
+    offset = (price_similarity_pct / 100) * abs(anchor_price)
+    if inverted:
+        threshold = anchor_price - offset
+    else:
+        threshold = anchor_price + offset
     _LOGGER.debug(
-        "Price similarity threshold: %.3f (cheapest: %.3f, pct: %.1f%%, strategy: %s)",
-        threshold, min_price, price_similarity_pct,
-        "additive" if min_price < 0 else "multiplicative",
+        "Price similarity threshold: %.3f (anchor: %.3f, pct: %.1f%%, mode: %s)",
+        threshold, anchor_price, price_similarity_pct,
+        "inverted" if inverted else "normal",
     )
     return threshold
 
@@ -54,16 +59,21 @@ def _process_day_slots(
     always_cheap: float | None,
     always_expensive: float | None,
     now: datetime,
+    inverted: bool = False,
 ) -> tuple[list[dict], int]:
     """Process a day's price-sorted slots into schedule entries.
 
     Args:
-        sorted_slots: Slots sorted by price (cheapest first).
+        sorted_slots: Slots sorted by price (cheapest first in normal mode,
+                       most expensive first in inverted mode).
         activated_count: Remaining activation quota.
         threshold: Price similarity threshold, or None if disabled.
-        always_cheap: Price at or below which slots are always active. None = disabled.
-        always_expensive: Price at or above which slots are never active. None = disabled.
+        always_cheap: In normal mode: always activate at or below this price.
+                      In inverted mode: never activate at or below this price.
+        always_expensive: In normal mode: never activate at or above this price.
+                         In inverted mode: always activate at or above this price.
         now: Current datetime for timezone conversion.
+        inverted: If True, select most expensive hours and swap threshold roles.
 
     Returns:
         Tuple of (schedule_entries, remaining_activated_count).
@@ -74,12 +84,18 @@ def _process_day_slots(
             start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
             price = float(slot.get("value", 0))
 
-            is_within_threshold = threshold is not None and price <= threshold
-            is_cheap = always_cheap is not None and price <= always_cheap
-            is_expensive = always_expensive is not None and price >= always_expensive
+            if inverted:
+                is_within_threshold = threshold is not None and price >= threshold
+                is_always_activate = always_expensive is not None and price >= always_expensive
+                is_never_activate = always_cheap is not None and price <= always_cheap
+            else:
+                is_within_threshold = threshold is not None and price <= threshold
+                is_always_activate = always_cheap is not None and price <= always_cheap
+                is_never_activate = always_expensive is not None and price >= always_expensive
+
             is_active = (
-                (is_cheap or activated_count > 0 or is_within_threshold)
-                and not is_expensive
+                (is_always_activate or activated_count > 0 or is_within_threshold)
+                and not is_never_activate
             )
             status = "active" if is_active else "standby"
 
@@ -111,6 +127,7 @@ def build_schedule(
     prev_activity_history: list[str] | None = None,
     price_similarity_pct: float | None = None,
     min_consecutive_hours: float | None = None,
+    selection_mode: str = "cheapest",
 ) -> list[dict]:
     """Build a schedule from Nordpool price data.
 
@@ -143,6 +160,7 @@ def build_schedule(
     if prev_activity_history is None:
         prev_activity_history = []
 
+    inverted = selection_mode == "most_expensive"
     min_slots = int(min_hours * 4)
     schedule: list[dict] = []
 
@@ -161,27 +179,27 @@ def build_schedule(
             min_slots, always_cheap,
         )
 
-    # Process today's slots (sorted by price, cheapest first)
-    sorted_today = sorted(raw_today, key=lambda x: x.get("value", 999))
+    # Process today's slots (sorted by price)
+    sorted_today = sorted(raw_today, key=lambda x: x.get("value", 999), reverse=inverted)
     activated_count = min_slots
-    today_threshold = _compute_similarity_threshold(sorted_today, price_similarity_pct)
+    today_threshold = _compute_similarity_threshold(sorted_today, price_similarity_pct, inverted)
     today_entries, activated_count = _process_day_slots(
         sorted_today, activated_count, today_threshold,
-        always_cheap, always_expensive, now,
+        always_cheap, always_expensive, now, inverted,
     )
     schedule.extend(today_entries)
 
     # Process tomorrow's slots if available
     if raw_tomorrow:
-        sorted_tomorrow = sorted(raw_tomorrow, key=lambda x: x.get("value", 999))
+        sorted_tomorrow = sorted(raw_tomorrow, key=lambda x: x.get("value", 999), reverse=inverted)
         # In rolling window mode, share quota across both days
         # In standard mode, reset to give each day its own quota
         if not use_rolling_window:
             activated_count = min_slots
-        tomorrow_threshold = _compute_similarity_threshold(sorted_tomorrow, price_similarity_pct)
+        tomorrow_threshold = _compute_similarity_threshold(sorted_tomorrow, price_similarity_pct, inverted)
         tomorrow_entries, activated_count = _process_day_slots(
             sorted_tomorrow, activated_count, tomorrow_threshold,
-            always_cheap, always_expensive, now,
+            always_cheap, always_expensive, now, inverted,
         )
         schedule.extend(tomorrow_entries)
 
@@ -191,13 +209,15 @@ def build_schedule(
     # Apply rolling window constraint if enabled
     if use_rolling_window:
         schedule = _apply_rolling_window_constraint(
-            schedule, rolling_window_hours, min_hours, now, prev_activity_history
+            schedule, rolling_window_hours, min_hours, now, prev_activity_history,
+            inverted=inverted,
         )
 
     # Apply minimum consecutive hours constraint if enabled
     if min_consecutive_hours is not None and min_consecutive_hours > 0:
         schedule = _enforce_min_consecutive(
-            schedule, min_consecutive_hours, min_hours, always_expensive
+            schedule, min_consecutive_hours, min_hours, always_expensive,
+            inverted=inverted, always_cheap=always_cheap,
         )
 
     # Log statistics
@@ -221,6 +241,8 @@ def _apply_rolling_window_constraint(
     min_hours: float,
     now: datetime,
     prev_activity_history: list[str] | None = None,
+    *,
+    inverted: bool = False,
 ) -> list[dict]:
     """Ensure minimum activity within any rolling window.
 
@@ -347,9 +369,9 @@ def _apply_rolling_window_constraint(
                 active_in_future, required_future_slots, available_hours, shortfall,
             )
 
-            # Activate cheapest standby slots
+            # Activate preferred standby slots (cheapest in normal, most expensive in inverted)
             standby_slots = [s for s in future_schedule if s.get("status") == "standby"]
-            standby_slots.sort(key=lambda x: x["price"])
+            standby_slots.sort(key=lambda x: x["price"], reverse=inverted)
 
             for i in range(min(shortfall, len(standby_slots))):
                 for s in schedule:
@@ -385,7 +407,7 @@ def _apply_rolling_window_constraint(
             )
 
             standby_in_window = [s for s in window_slots_list if s.get("status") == "standby"]
-            standby_in_window.sort(key=lambda x: x["price"])
+            standby_in_window.sort(key=lambda x: x["price"], reverse=inverted)
 
             for i in range(min(shortfall, len(standby_in_window))):
                 for s in schedule:
@@ -432,19 +454,27 @@ def _enforce_min_consecutive(
     min_consecutive_hours: float,
     min_hours: float,
     always_expensive: float | None,
+    *,
+    inverted: bool = False,
+    always_cheap: float | None = None,
 ) -> list[dict]:
     """Ensure all active blocks are at least min_consecutive_hours long.
 
-    Extends short blocks by activating the cheapest adjacent standby slot,
+    Extends short blocks by activating the best adjacent standby slot
+    (cheapest in normal mode, most expensive in inverted mode),
     one slot at a time. Iterates until all blocks meet the minimum or no
-    further extension is possible. Never activates slots at or above
-    always_expensive.
+    further extension is possible.
+
+    In normal mode: never activates slots at or above always_expensive.
+    In inverted mode: never activates slots at or below always_cheap.
 
     Args:
         schedule: Time-sorted schedule (modified in-place).
         min_consecutive_hours: Minimum consecutive hours per active block.
         min_hours: Overall minimum hours (caps the consecutive requirement).
-        always_expensive: Price threshold; slots at/above this are never activated.
+        always_expensive: Price threshold; in normal mode, slots at/above are never activated.
+        inverted: If True, use inverted selection logic.
+        always_cheap: Price threshold; in inverted mode, slots at/below are never activated.
 
     Returns:
         The modified schedule.
@@ -484,19 +514,30 @@ def _enforce_min_consecutive(
             candidates = []
             if block_start > 0 and schedule[block_start - 1].get("status") == "standby":
                 price = schedule[block_start - 1].get("price", 999)
-                if always_expensive is None or price < always_expensive:
-                    candidates.append(block_start - 1)
+                if inverted:
+                    if always_cheap is None or price > always_cheap:
+                        candidates.append(block_start - 1)
+                else:
+                    if always_expensive is None or price < always_expensive:
+                        candidates.append(block_start - 1)
 
             if block_end_idx < len(schedule) and schedule[block_end_idx].get("status") == "standby":
                 price = schedule[block_end_idx].get("price", 999)
-                if always_expensive is None or price < always_expensive:
-                    candidates.append(block_end_idx)
+                if inverted:
+                    if always_cheap is None or price > always_cheap:
+                        candidates.append(block_end_idx)
+                else:
+                    if always_expensive is None or price < always_expensive:
+                        candidates.append(block_end_idx)
 
             if not candidates:
                 continue
 
-            # Pick the cheapest adjacent slot
-            best = min(candidates, key=lambda i: schedule[i].get("price", 999))
+            # Pick the best adjacent slot (cheapest in normal, most expensive in inverted)
+            if inverted:
+                best = max(candidates, key=lambda i: schedule[i].get("price", 0))
+            else:
+                best = min(candidates, key=lambda i: schedule[i].get("price", 999))
             schedule[best]["status"] = "active"
             slots_activated += 1
             _LOGGER.debug(

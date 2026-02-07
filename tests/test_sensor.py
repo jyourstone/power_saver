@@ -91,6 +91,7 @@ def test_status_sensor_attributes():
         current_state="active",
         current_price=0.1,
         min_price=0.03,
+        max_price=0.60,
         next_change="2026-02-06T11:00:00+01:00",
         active_slots=10,
         emergency_mode=False,
@@ -101,6 +102,7 @@ def test_status_sensor_attributes():
     assert attrs == {
         "current_price": 0.1,
         "min_price": 0.03,
+        "max_price": 0.60,
         "next_change": "2026-02-06T11:00:00+01:00",
         "active_slots": 10,
         "emergency_mode": False,
