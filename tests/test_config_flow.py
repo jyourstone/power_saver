@@ -18,6 +18,7 @@ from custom_components.power_saver.const import (
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
     CONF_NORDPOOL_TYPE,
+    CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
@@ -34,8 +35,27 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture
-def setup_hacs_nordpool(hass: HomeAssistant):
+async def setup_hacs_nordpool(hass: HomeAssistant):
     """Set up a fake HACS Nordpool sensor with raw_today attribute."""
+    # Create a mock config entry for the nordpool HACS integration
+    nordpool_config_entry = MockConfigEntry(
+        domain="nordpool",
+        title="Nordpool HACS",
+        entry_id="nordpool_hacs_entry",
+    )
+    nordpool_config_entry.add_to_hass(hass)
+
+    # Register the entity in the entity registry (auto_detect searches the registry)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        domain="sensor",
+        platform="nordpool",
+        unique_id="kwh_se4_sek",
+        suggested_object_id="nordpool_kwh_se4_sek",
+        config_entry=nordpool_config_entry,
+    )
+
+    # Set the state with raw_today attribute (HACS signature)
     hass.states.async_set(
         NORDPOOL_ENTITY,
         "0.50",
@@ -95,6 +115,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
             CONF_ALWAYS_CHEAP: 0.05,
             CONF_ALWAYS_EXPENSIVE: 2.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
+            CONF_PRICE_SIMILARITY_PCT: 10.0,
         },
     )
 
@@ -109,6 +130,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
     assert result["options"][CONF_ALWAYS_CHEAP] == 0.05
     assert result["options"][CONF_ALWAYS_EXPENSIVE] == 2.0
     assert result["options"][CONF_ROLLING_WINDOW_HOURS] == 24.0
+    assert result["options"][CONF_PRICE_SIMILARITY_PCT] == 10.0
 
 
 async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpool):
@@ -122,8 +144,6 @@ async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpoo
         {
             CONF_NAME: "Floor Heating",
             CONF_MIN_HOURS: 4.0,
-            CONF_ALWAYS_CHEAP: 0.0,
-            CONF_ALWAYS_EXPENSIVE: 0.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
         },
     )
@@ -131,6 +151,10 @@ async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpoo
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE
     assert result["data"][CONF_NORDPOOL_SENSOR] == setup_native_nordpool.entity_id
+    # Optional fields left empty should store as None (disabled)
+    assert result["options"][CONF_ALWAYS_CHEAP] is None
+    assert result["options"][CONF_ALWAYS_EXPENSIVE] is None
+    assert result["options"][CONF_PRICE_SIMILARITY_PCT] is None
 
 
 async def test_no_nordpool_found(hass: HomeAssistant):
@@ -144,8 +168,6 @@ async def test_no_nordpool_found(hass: HomeAssistant):
         {
             CONF_NAME: "Test",
             CONF_MIN_HOURS: 2.5,
-            CONF_ALWAYS_CHEAP: 0.0,
-            CONF_ALWAYS_EXPENSIVE: 0.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
         },
     )

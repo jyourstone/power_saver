@@ -16,13 +16,15 @@ CONF_MIN_HOURS = "min_hours"
 CONF_ALWAYS_CHEAP = "always_cheap_price"
 CONF_ALWAYS_EXPENSIVE = "always_expensive_price"
 CONF_ROLLING_WINDOW_HOURS = "rolling_window_hours"
+CONF_PRICE_SIMILARITY_PCT = "price_similarity_pct"
 CONF_CONTROLLED_ENTITIES = "controlled_entities"
 
 # Defaults
 DEFAULT_MIN_HOURS = 2.5
-DEFAULT_ALWAYS_CHEAP = 0.0
-DEFAULT_ALWAYS_EXPENSIVE = 0.0  # 0 = disabled
+DEFAULT_ALWAYS_CHEAP = None  # None = disabled (field left empty)
+DEFAULT_ALWAYS_EXPENSIVE = None  # None = disabled (field left empty)
 DEFAULT_ROLLING_WINDOW_HOURS = 24.0
+DEFAULT_PRICE_SIMILARITY_PCT = None  # None = disabled (field left empty)
 
 # Update interval in minutes
 UPDATE_INTERVAL_MINUTES = 15
