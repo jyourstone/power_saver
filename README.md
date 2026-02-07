@@ -32,7 +32,7 @@
 ## Requirements
 
 - Home Assistant 2024.4.0 or newer
-- Nordpool integration, either the [native addon](https://www.home-assistant.io/integrations/nordpool/) or the [HACS custom addon](https://github.com/custom-components/nordpool) installed and configured
+- Nordpool integration, either the [native addon](https://www.home-assistant.io/integrations/nordpool/) or the [HACS custom addon](https://github.com/custom-components/nordpool), installed and configured
 
 ## Installation
 
