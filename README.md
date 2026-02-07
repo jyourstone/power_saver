@@ -1,15 +1,30 @@
-# Power Saver
+<p align="center">
+  <img src="https://brands.home-assistant.io/_/power_saver/icon@2x.png" alt="Power Saver logo" width="128" height="128">
+</p>
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+<h1 align="center">Power Saver</h1>
 
-A Home Assistant custom integration that schedules appliances based on [Nordpool](https://github.com/custom-components/nordpool) electricity prices. It selects the cheapest hours to run your appliances, saving money while keeping them running when needed.
+<p align="center">
+  A Home Assistant custom integration that finds the cheapest (or most expensive) upcoming hours based on<br>
+  <a href="https://www.home-assistant.io/integrations/nordpool/">Nordpool</a> electricity prices to save money automatically.
+</p>
+
+<p align="center">
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS"></a>
+  <a href="https://github.com/jyourstone/power_saver/releases"><img src="https://img.shields.io/github/v/release/jyourstone/power_saver" alt="Release"></a>
+  <a href="https://github.com/jyourstone/power_saver/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jyourstone/power_saver" alt="License"></a>
+</p>
+
+---
 
 ## Features
 
-- **Price-based scheduling** — Automatically activates the cheapest hours of the day
-- **Always-cheap threshold** — Slots below a price threshold are always activated
-- **Always-expensive threshold** — Safety cutoff to never activate above a certain price
-- **Rolling window constraint** — Ensures minimum activity within any configurable time window (e.g., water heater must run at least 6 hours in any 24-hour window)
+- **Price-based scheduling** — Automatically activates the cheapest/most expensive hours of the day
+- **Always-cheap threshold** — Slots below/above a price threshold are always activated
+- **Always-expensive threshold** — Safety cutoff to never activate above/below a certain price
+- **Price similarity threshold** — Groups slots with nearly identical prices for more natural scheduling
+- **Rolling window constraint** — Ensures minimum activity within any configurable time window (e.g., water heater must run at least 4 hours in any 24-hour window)
+- **Minimum consecutive hours** — Prevents short on/off cycles by requiring a minimum run duration
 - **Multiple instances** — Add one per appliance (water heater, floor heating, pool pump, etc.)
 - **Emergency mode** — Keeps appliances running if price data is unavailable
 - **No helpers needed** — All configuration is done through the integration's UI
@@ -17,17 +32,17 @@ A Home Assistant custom integration that schedules appliances based on [Nordpool
 ## Requirements
 
 - Home Assistant 2024.4.0 or newer
-- [Nordpool integration](https://github.com/custom-components/nordpool) installed and configured
+- Nordpool integration, either the [native addon](https://www.home-assistant.io/integrations/nordpool/) or the [HACS custom addon](https://github.com/custom-components/nordpool) installed and configured
 
 ## Installation
 
 ### HACS (Recommended)
 
-1. Open HACS in your Home Assistant instance
-2. Click the three dots in the top right corner → **Custom repositories**
-3. Add `https://github.com/jyourstone/power_saver` with category **Integration**
-4. Click **Install**
-5. Restart Home Assistant
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jyourstone&repository=power_saver&category=integration)
+
+1. Click the button above (or manually add `https://github.com/jyourstone/power_saver` as a custom repository in HACS, category: **Integration**)
+2. Click **Install**
+3. Restart Home Assistant
 
 ### Manual
 
@@ -43,11 +58,14 @@ A Home Assistant custom integration that schedules appliances based on [Nordpool
 | Field | Description |
 |-------|-------------|
 | **Name** | A descriptive name (e.g., "Water Heater", "Floor Heating") |
-| **Nordpool price sensor** | Your Nordpool sensor entity |
-| **Minimum active hours** | How many hours per day the appliance should run (cheapest hours selected) |
-| **Always-cheap price** | Price below which slots are always active (0 = disabled) |
-| **Always-expensive price** | Price at/above which slots are never active (0 = disabled) |
-| **Rolling window hours** | Ensures minimum hours within a rolling window (0 = disabled, uses daily mode) |
+| **Mode** | `Cheapest` selects the cheapest hours; `Most expensive` selects the most expensive (inverts the schedule) |
+| **Rolling window hours** | Ensures minimum hours within a rolling window (empty = disabled, uses daily mode) |
+| **Minimum active hours** | How many hours per day the appliance should run |
+| **Always-cheap price** | Price below which slots are always active (empty = disabled) |
+| **Always-expensive price** | Price at/above which slots are never active (empty = disabled) |
+| **Price similarity threshold** | Prices within this range are treated as equal (empty = disabled) |
+| **Minimum consecutive active hours** | Minimum number of hours to keep active in a row (empty = disabled) |
+| **Controlled entities** | One or more `switch`, `input_boolean`, or `light` entities to turn on/off automatically (empty = disabled) |
 
 4. Click **Submit**
 
@@ -57,14 +75,16 @@ To add another appliance, simply add the integration again with different settin
 
 All scheduling parameters can be changed at any time via **Settings** → **Devices & Services** → **Power Saver** → **Configure**. Changes take effect immediately.
 
-## Sensor
+## Sensors
 
-Each instance creates a sensor with:
+Each instance creates the following sensors:
 
-### State
+### Status sensor
 
-- `active` — The appliance should be running in the current time slot
-- `standby` — The appliance should be off in the current time slot
+| State | Description |
+|-------|-------------|
+| `active` | The appliance should be running in the current time slot |
+| `standby` | The appliance should be off in the current time slot |
 
 ### Attributes
 
@@ -79,43 +99,23 @@ Each instance creates a sensor with:
 | `hours_since_last_active` | Hours since the last active slot |
 | `emergency_mode` | `true` if running without price data |
 
-## Example automation
+### Diagnostic sensors
 
-### Switch appliance based on Power Saver state
-
-```yaml
-automation:
-  - alias: "Water Heater Power Saver"
-    trigger:
-      - platform: state
-        entity_id: sensor.water_heater_schedule
-    action:
-      - choose:
-          - conditions:
-              - condition: state
-                entity_id: sensor.water_heater_schedule
-                state: "active"
-            sequence:
-              - service: switch.turn_on
-                target:
-                  entity_id: switch.water_heater
-          - conditions:
-              - condition: state
-                entity_id: sensor.water_heater_schedule
-                state: "standby"
-            sequence:
-              - service: switch.turn_off
-                target:
-                  entity_id: switch.water_heater
-```
+| Sensor | Description |
+|--------|-------------|
+| **Schedule** | Full schedule as a diagnostic entity |
+| **Last Active** | Timestamp of the last active slot |
+| **Active Hours in Window** | Hours of activity within the rolling window |
 
 ## How it works
 
 1. **Price data** — Reads hourly prices from your Nordpool sensor (today + tomorrow when available)
-2. **Slot selection** — Selects the cheapest 15-minute slots to meet your minimum active hours
+2. **Slot selection** — Selects the cheapest (or most expensive) 15-minute slots to meet your minimum active hours
 3. **Thresholds** — Applies always-cheap (force on) and always-expensive (force off) price thresholds
-4. **Rolling window** (optional) — Ensures minimum activity within any rolling time window, activating additional slots as needed to meet the constraint
-5. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
+4. **Similarity grouping** — Groups slots with nearly identical prices for more consistent scheduling
+5. **Rolling window** (optional) — Ensures minimum activity within any rolling time window, activating additional slots as needed
+6. **Consecutive hours** (optional) — Merges short active segments to prevent rapid on/off cycling
+7. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
 
 ## License
 
