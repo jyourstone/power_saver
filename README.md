@@ -13,6 +13,7 @@
   <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS"></a>
   <a href="https://github.com/jyourstone/power_saver/releases"><img src="https://img.shields.io/github/v/release/jyourstone/power_saver" alt="Release"></a>
   <a href="https://github.com/jyourstone/power_saver/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jyourstone/power_saver" alt="License"></a>
+  <a href="https://buymeacoffee.com/jyourstone"><img src="https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?logo=buy-me-a-coffee&logoColor=black" alt="Buy Me A Coffee"></a>
 </p>
 
 ---
@@ -117,6 +118,6 @@ Each instance creates the following sensors:
 6. **Consecutive hours** (optional) — Merges short active segments to prevent rapid on/off cycling
 7. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
 
-## License
+## Disclaimer
 
-MIT License — see [LICENSE](LICENSE) for details.
+The vast majority of this project was developed by an AI assistant. While I do have some basic experience with programming from a long time ago, I'm essentially the architect, guiding the AI, fixing its occasional goofs, and trying to keep it from becoming self-aware.
