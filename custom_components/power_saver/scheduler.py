@@ -450,6 +450,11 @@ def _enforce_min_consecutive(
         The modified schedule.
     """
     effective_hours = min(min_consecutive_hours, min_hours)
+    if effective_hours < min_consecutive_hours:
+        _LOGGER.warning(
+            "min_consecutive_hours (%.1f) capped to min_hours (%.1f)",
+            min_consecutive_hours, min_hours,
+        )
     effective_slots = int(effective_hours * 4)
     if effective_slots <= 0:
         return schedule
@@ -464,7 +469,7 @@ def _enforce_min_consecutive(
 
     for _ in range(max_iterations):
         blocks = _find_active_blocks(schedule)
-        short_blocks = [(s, l) for s, l in blocks if l < effective_slots]
+        short_blocks = [(s, length) for s, length in blocks if length < effective_slots]
         if not short_blocks:
             break
 

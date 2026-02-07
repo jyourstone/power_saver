@@ -529,22 +529,6 @@ class TestMinConsecutiveHours:
 
     def test_short_block_gets_extended(self, now):
         """A single short block should be extended to meet the minimum."""
-        # 5 hours: 1 active surrounded by standby, min_consecutive=3
-        prices = [
-            make_nordpool_slot(h, 0.50 if h != 2 else 0.01)
-            for h in range(5)
-        ]
-        # min_hours=1 activates 4 slots (1 hour). min_consecutive=3 hours.
-        # But effective = min(3, 1) = 1, so no extension. Let's use min_hours >= 3.
-        # Actually, with min_hours=1, only 4 slots activated = 1 hour.
-        # min_consecutive=3, effective = min(3, 1) = 1 hour = 4 slots.
-        # That means no extension needed (1 slot already >= 4 slots? no, 1 slot = 1 slot)
-        #
-        # Let's use hourly data directly and think in terms of slots:
-        # With 5 hourly slots and min_hours=0.25 (1 slot), the cheapest is hour 2 (0.01).
-        # Active: [2]. min_consecutive=2 means effective = min(2, 0.25) = 0.25 → 1 slot. No effect.
-        #
-        # Better test: use more data, min_hours high enough for scattered slots.
         prices = [make_nordpool_slot(h, p) for h, p in enumerate([
             0.50, 0.10, 0.50, 0.50, 0.50,  # hour 1 cheap, isolated
             0.50, 0.50, 0.10, 0.50, 0.50,  # hour 7 cheap, isolated
@@ -734,4 +718,4 @@ class TestMinConsecutiveHours:
             if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
         )
         assert hour4_slot["status"] == "active", "Should extend toward cheaper neighbor (hour 4)"
-        # hour 6 might or might not be active depending on other slots, but hour 4 should be preferred
+        assert hour6_slot["status"] == "standby", "Expensive hour 6 should not be activated"
