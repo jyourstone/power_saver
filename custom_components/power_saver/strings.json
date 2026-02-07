@@ -6,7 +6,7 @@
         "description": "Configure a power saver instance for an appliance. The Nordpool sensor is detected automatically (HACS or native). You can add multiple instances for different appliances.",
         "data": {
           "name": "Name",
-          "selection_mode": "Selection mode",
+          "selection_mode": "Mode",
           "min_hours": "Minimum active hours",
           "rolling_window_hours": "Rolling window size (hours)",
           "always_cheap_price": "Always-cheap price threshold (optional)",
@@ -17,12 +17,12 @@
         },
         "data_description": {
           "name": "A descriptive name for this instance (e.g., 'Water Heater').",
-          "selection_mode": "Choose whether to select the cheapest hours (default) or the most expensive hours. In 'Most expensive' mode the always-cheap/always-expensive thresholds swap roles.",
-          "min_hours": "Minimum number of hours to keep active within each rolling window. The cheapest slots are selected.",
+          "selection_mode": "Choose whether to activate the cheapest hours (default) or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
+          "min_hours": "Minimum number of hours to keep active within each rolling window.",
           "rolling_window_hours": "Time window in hours to spread active slots across. Smaller values prevent long inactive gaps. 24 = optimize across the full day.",
           "always_cheap_price": "Price below which the slot is always activated, regardless of other settings. In 'Most expensive' mode: never activate below this price. Leave empty to disable.",
           "always_expensive_price": "Price at or above which the slot is never activated (safety cutoff). In 'Most expensive' mode: always activate above this price. Leave empty to disable.",
-          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. For example, 20% means any slot up to 1.2x the cheapest price is also activated. Useful on flat-price days. Leave empty to disable.",
+          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. For example, 20% means any slot up to 1.2\u00d7 the cheapest price is also activated. In 'Most expensive' mode: computed from the most expensive price downward. Useful on flat-price days. Leave empty to disable.",
           "min_consecutive_hours": "Minimum number of consecutive hours per active block. Prevents short on/off cycling for appliances like water heaters. Short blocks are extended by activating adjacent slots. Leave empty to disable.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
@@ -42,7 +42,7 @@
         "title": "Power Saver Options",
         "description": "Adjust scheduling parameters. Changes take effect immediately.",
         "data": {
-          "selection_mode": "Selection mode",
+          "selection_mode": "Mode",
           "min_hours": "Minimum active hours",
           "rolling_window_hours": "Rolling window size (hours)",
           "always_cheap_price": "Always-cheap price threshold (optional)",
@@ -52,12 +52,12 @@
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
-          "selection_mode": "Choose whether to select the cheapest hours or the most expensive hours.",
+          "selection_mode": "Choose whether to activate the cheapest hours or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
           "min_hours": "Minimum number of hours to keep active within each rolling window.",
           "rolling_window_hours": "Time window in hours to spread active slots across. Smaller = more evenly spread. 24 = full day.",
           "always_cheap_price": "Price below which slots are always activated. In 'Most expensive' mode: never activate below this price. Leave empty to disable.",
           "always_expensive_price": "Price at or above which slots are never activated. In 'Most expensive' mode: always activate above this price. Leave empty to disable.",
-          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. Leave empty to disable.",
+          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. In 'Most expensive' mode: computed from the most expensive price downward. Leave empty to disable.",
           "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to disable.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }

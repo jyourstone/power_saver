@@ -131,7 +131,7 @@ def build_schedule(
 ) -> list[dict]:
     """Build a schedule from Nordpool price data.
 
-    Activation logic:
+    Activation logic (default 'cheapest' mode):
     - Activate the cheapest slots up to min_hours (converted to 15-min slots)
     - Activate any slots with price <= always_cheap regardless of quota
     - If price_similarity_pct > 0, also activate slots within that percentage
@@ -140,19 +140,31 @@ def build_schedule(
     - If rolling window constraint is enabled, additional slots are activated as needed
     - If min_consecutive_hours is set, short active blocks are extended to meet the minimum
 
+    In 'most_expensive' mode the logic is inverted:
+    - Activate the most expensive slots up to min_hours
+    - always_expensive forces activation at or above its price
+    - always_cheap prevents activation at or below its price
+    - price_similarity_pct expands from the most expensive price downward
+
     Args:
         raw_today: Nordpool raw_today attribute (list of dicts with start, end, value).
         raw_tomorrow: Nordpool raw_tomorrow attribute (may be empty).
         min_hours: Minimum active hours per day.
         now: Current datetime (timezone-aware).
         always_cheap: Price at or below which slots are always active. None = disabled.
+            In 'most_expensive' mode: never activate at or below this price.
         always_expensive: Price at or above which slots are never active. None = disabled.
+            In 'most_expensive' mode: always activate at or above this price.
         rolling_window_hours: Rolling window size in hours (always >= 1).
         prev_activity_history: List of ISO timestamps of previously active slots.
         price_similarity_pct: Percentage threshold for price similarity. Slots within
             this percentage of the cheapest price are also activated. None = disabled.
+            In 'most_expensive' mode: computed from the most expensive price downward.
         min_consecutive_hours: Minimum consecutive active hours per block. Short blocks
             are extended by activating adjacent slots. None = disabled.
+        selection_mode: "cheapest" (default) selects the cheapest slots;
+            "most_expensive" inverts the logic to select the most expensive slots
+            and swaps the roles of always_cheap/always_expensive thresholds.
 
     Returns:
         List of schedule dicts: [{"price": float, "time": str, "status": str}, ...]

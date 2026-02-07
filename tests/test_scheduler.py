@@ -789,21 +789,27 @@ class TestMostExpensiveMode:
         """Price similarity threshold should expand from most expensive price downward."""
         # Prices clustered: 0.50, 0.49, 0.48, 0.47, repeating
         prices = [make_nordpool_slot(h, 0.50 - (h % 4) * 0.01) for h in range(24)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 19)]
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
             min_hours=2.5,  # 10 slots
             now=now,
-            price_similarity_pct=10.0,  # 10% of 0.50 = 0.05, threshold at 0.45
+            prev_activity_history=history,
+            price_similarity_pct=4.0,  # 4% of 0.50 = 0.02, threshold at 0.48
             selection_mode="most_expensive",
         )
 
         active = [s for s in schedule if s["status"] == "active"]
-        # Slots >= 0.45 should be active due to threshold (0.50, 0.49, 0.48, 0.47 all >= 0.45)
-        assert len(active) > 10
-        # All active slots should have price >= 0.45
+        # Slots >= 0.48 should be active: 0.50, 0.49, 0.48 (18 out of 24)
+        assert len(active) == 18
+        # 0.47 slots should be standby (below threshold)
+        for s in schedule:
+            if s["price"] == 0.47:
+                assert s["status"] == "standby"
+        # All active slots should have price >= 0.48
         for s in active:
-            assert s["price"] >= 0.45
+            assert s["price"] >= 0.48
 
     def test_inverted_consecutive_extends_with_most_expensive(self, now):
         """In inverted mode, consecutive extension should prefer more expensive adjacent slots."""
@@ -858,6 +864,6 @@ class TestMostExpensiveMode:
             selection_mode="cheapest",
         )
 
-        for a, b in zip(schedule_default, schedule_explicit):
+        for a, b in zip(schedule_default, schedule_explicit, strict=True):
             assert a["status"] == b["status"]
             assert a["time"] == b["time"]
