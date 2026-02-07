@@ -25,8 +25,10 @@ from .const import (
     CONF_NORDPOOL_TYPE,
     CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
+    CONF_SELECTION_MODE,
     DEFAULT_MIN_HOURS,
     DEFAULT_ROLLING_WINDOW_HOURS,
+    DEFAULT_SELECTION_MODE,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
     STATE_ACTIVE,
@@ -49,6 +51,7 @@ class PowerSaverData:
     current_state: str = STATE_STANDBY
     current_price: float | None = None
     min_price: float | None = None
+    max_price: float | None = None
     next_change: str | None = None
     active_slots: int = 0
     last_active_time: str | None = None
@@ -116,6 +119,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         )
         price_similarity_pct = options.get(CONF_PRICE_SIMILARITY_PCT)
         min_consecutive_hours = options.get(CONF_MIN_CONSECUTIVE_HOURS)
+        selection_mode = options.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE)
 
         # Load activity history from persistent storage on first run
         if not self._history_loaded:
@@ -165,6 +169,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             prev_activity_history=self._activity_history,
             price_similarity_pct=price_similarity_pct,
             min_consecutive_hours=min_consecutive_hours,
+            selection_mode=selection_mode,
         )
 
         # Find current slot
@@ -179,9 +184,10 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         # Find next state change
         next_change = scheduler.find_next_change(schedule, current_slot, now)
 
-        # Calculate min price from today
+        # Calculate min/max price from today
         today_prices = [s.get("value") for s in raw_today if s.get("value") is not None]
         min_price = round(min(today_prices), 3) if today_prices else None
+        max_price = round(max(today_prices), 3) if today_prices else None
 
         # Update activity history and persist to storage
         self._activity_history = scheduler.build_activity_history(
@@ -204,6 +210,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             current_state=current_state,
             current_price=round(current_price, 3) if current_price is not None else None,
             min_price=min_price,
+            max_price=max_price,
             next_change=next_change,
             active_slots=active_slots,
             last_active_time=last_active_time,

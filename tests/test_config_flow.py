@@ -21,9 +21,12 @@ from custom_components.power_saver.const import (
     CONF_NORDPOOL_TYPE,
     CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
+    CONF_SELECTION_MODE,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
     NORDPOOL_TYPE_NATIVE,
+    SELECTION_MODE_CHEAPEST,
+    SELECTION_MODE_MOST_EXPENSIVE,
 )
 
 NORDPOOL_ENTITY = "sensor.nordpool_kwh_se4_sek"
@@ -112,6 +115,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
         result["flow_id"],
         {
             CONF_NAME: "Water Heater",
+            CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
             CONF_MIN_HOURS: 6.0,
             CONF_ALWAYS_CHEAP: 0.05,
             CONF_ALWAYS_EXPENSIVE: 2.0,
@@ -128,6 +132,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
         CONF_NORDPOOL_TYPE: NORDPOOL_TYPE_HACS,
         CONF_NAME: "Water Heater",
     }
+    assert result["options"][CONF_SELECTION_MODE] == SELECTION_MODE_CHEAPEST
     assert result["options"][CONF_MIN_HOURS] == 6.0
     assert result["options"][CONF_ALWAYS_CHEAP] == 0.05
     assert result["options"][CONF_ALWAYS_EXPENSIVE] == 2.0
@@ -159,6 +164,26 @@ async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpoo
     assert result["options"][CONF_ALWAYS_EXPENSIVE] is None
     assert result["options"][CONF_PRICE_SIMILARITY_PCT] is None
     assert result["options"][CONF_MIN_CONSECUTIVE_HOURS] is None
+
+
+async def test_config_flow_most_expensive_mode(hass: HomeAssistant, setup_hacs_nordpool):
+    """Test config flow with most_expensive selection mode."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Grid Sell",
+            CONF_SELECTION_MODE: SELECTION_MODE_MOST_EXPENSIVE,
+            CONF_MIN_HOURS: 3.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_SELECTION_MODE] == SELECTION_MODE_MOST_EXPENSIVE
 
 
 async def test_no_nordpool_found(hass: HomeAssistant):

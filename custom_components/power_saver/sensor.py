@@ -77,6 +77,7 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
         return {
             "current_price": data.current_price,
             "min_price": data.min_price,
+            "max_price": data.max_price,
             "next_change": data.next_change,
             "active_slots": data.active_slots,
             "emergency_mode": data.emergency_mode,

@@ -719,3 +719,151 @@ class TestMinConsecutiveHours:
         )
         assert hour4_slot["status"] == "active", "Should extend toward cheaper neighbor (hour 4)"
         assert hour6_slot["status"] == "standby", "Expensive hour 6 should not be activated"
+
+
+class TestMostExpensiveMode:
+    """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
+
+    def test_most_expensive_slots_activated(self, now, today_prices):
+        """The most expensive N slots should be activated in inverted mode."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,  # 10 slots
+            now=now,
+            prev_activity_history=history,
+            selection_mode="most_expensive",
+        )
+
+        active = [s for s in schedule if s["status"] == "active"]
+        assert len(active) == 10
+
+        # All active prices should be >= all standby prices
+        active_prices = sorted(s["price"] for s in active)
+        standby_prices = sorted(
+            s["price"] for s in schedule if s["status"] == "standby"
+        )
+        assert active_prices[0] >= standby_prices[-1]
+
+    def test_inverted_always_expensive_acts_as_always_activate(self, now, today_prices):
+        """In inverted mode, always_expensive means 'always activate above this price'."""
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=0.25,  # Only 1 slot quota
+            now=now,
+            always_expensive=0.50,
+            selection_mode="most_expensive",
+        )
+
+        active = [s for s in schedule if s["status"] == "active"]
+        # All slots with price >= 0.50 should be active
+        expensive_slots = [s for s in schedule if s["price"] >= 0.50]
+        for slot in expensive_slots:
+            assert slot["status"] == "active"
+        # Should have more than 1 because always_expensive forces activation
+        assert len(active) > 1
+
+    def test_inverted_always_cheap_acts_as_never_activate(self, now, today_prices):
+        """In inverted mode, always_cheap means 'never activate below this price'."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 25)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=6.0,  # Would normally activate many
+            now=now,
+            always_cheap=0.15,
+            prev_activity_history=history,
+            selection_mode="most_expensive",
+        )
+
+        # No slot at or below 0.15 should be active
+        cheap_active = [
+            s for s in schedule
+            if s["status"] == "active" and s["price"] <= 0.15
+        ]
+        assert len(cheap_active) == 0
+
+    def test_inverted_similarity_threshold(self, now):
+        """Price similarity threshold should expand from most expensive price downward."""
+        # Prices clustered: 0.50, 0.49, 0.48, 0.47, repeating
+        prices = [make_nordpool_slot(h, 0.50 - (h % 4) * 0.01) for h in range(24)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 19)]
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=2.5,  # 10 slots
+            now=now,
+            prev_activity_history=history,
+            price_similarity_pct=4.0,  # 4% of 0.50 = 0.02, threshold at 0.48
+            selection_mode="most_expensive",
+        )
+
+        active = [s for s in schedule if s["status"] == "active"]
+        # Slots >= 0.48 should be active: 0.50, 0.49, 0.48 (18 out of 24)
+        assert len(active) == 18
+        # 0.47 slots should be standby (below threshold)
+        for s in schedule:
+            if s["price"] == 0.47:
+                assert s["status"] == "standby"
+        # All active slots should have price >= 0.48
+        for s in active:
+            assert s["price"] >= 0.48
+
+    def test_inverted_consecutive_extends_with_most_expensive(self, now):
+        """In inverted mode, consecutive extension should prefer more expensive adjacent slots."""
+        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+            0.50, 0.50, 0.50, 0.50, 0.80,  # hour 4 = 0.80 (expensive neighbor)
+            0.99,                              # hour 5 = most expensive
+            0.20, 0.50, 0.50, 0.50, 0.50,   # hour 6 = 0.20 (cheap neighbor)
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50,
+        ])]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=0.5,  # 2 slots
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=2,
+            selection_mode="most_expensive",
+        )
+
+        # Hour 4 (0.80) should be activated as extension, not hour 6 (0.20)
+        hour4_slot = next(
+            s for s in schedule
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 4
+        )
+        hour6_slot = next(
+            s for s in schedule
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
+        )
+        assert hour4_slot["status"] == "active", "Should extend toward more expensive neighbor"
+        assert hour6_slot["status"] == "standby", "Cheap hour 6 should not be activated"
+
+    def test_default_mode_is_cheapest(self, now, today_prices):
+        """Without explicit selection_mode, behavior should match 'cheapest'."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule_default = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+        )
+        schedule_explicit = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            selection_mode="cheapest",
+        )
+
+        for a, b in zip(schedule_default, schedule_explicit, strict=True):
+            assert a["status"] == b["status"]
+            assert a["time"] == b["time"]

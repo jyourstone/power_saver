@@ -23,6 +23,9 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
     TextSelector,
 )
 from homeassistant.util import slugify
@@ -38,9 +41,13 @@ from .const import (
     CONF_NORDPOOL_TYPE,
     CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
+    CONF_SELECTION_MODE,
     DEFAULT_MIN_HOURS,
     DEFAULT_ROLLING_WINDOW_HOURS,
+    DEFAULT_SELECTION_MODE,
     DOMAIN,
+    SELECTION_MODE_CHEAPEST,
+    SELECTION_MODE_MOST_EXPENSIVE,
 )
 from .nordpool_adapter import auto_detect_nordpool
 
@@ -59,6 +66,26 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         defaults = {}
     return vol.Schema(
         {
+            # Selection mode
+            vol.Required(
+                CONF_SELECTION_MODE,
+                default=defaults.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(
+                            value=SELECTION_MODE_CHEAPEST,
+                            label=SELECTION_MODE_CHEAPEST,
+                        ),
+                        SelectOptionDict(
+                            value=SELECTION_MODE_MOST_EXPENSIVE,
+                            label=SELECTION_MODE_MOST_EXPENSIVE,
+                        ),
+                    ],
+                    mode="dropdown",
+                    translation_key=CONF_SELECTION_MODE,
+                )
+            ),
             # Required scheduling parameters
             vol.Required(
                 CONF_MIN_HOURS,
@@ -152,6 +179,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_NAME: name,
                 }
                 options = {
+                    CONF_SELECTION_MODE: user_input.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE),
                     CONF_MIN_HOURS: user_input[CONF_MIN_HOURS],
                     CONF_ROLLING_WINDOW_HOURS: user_input[CONF_ROLLING_WINDOW_HOURS],
                     CONF_ALWAYS_CHEAP: user_input.get(CONF_ALWAYS_CHEAP),
