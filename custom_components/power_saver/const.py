@@ -21,10 +21,10 @@ CONF_CONTROLLED_ENTITIES = "controlled_entities"
 
 # Defaults
 DEFAULT_MIN_HOURS = 2.5
-DEFAULT_ALWAYS_CHEAP = 0.0  # 0 in UI → None (disabled) in scheduler
-DEFAULT_ALWAYS_EXPENSIVE = 0.0  # 0 in UI → None (disabled) in scheduler
+DEFAULT_ALWAYS_CHEAP = None  # None = disabled (field left empty)
+DEFAULT_ALWAYS_EXPENSIVE = None  # None = disabled (field left empty)
 DEFAULT_ROLLING_WINDOW_HOURS = 24.0
-DEFAULT_PRICE_SIMILARITY_PCT = 0.0  # 0 in UI → None (disabled) in scheduler
+DEFAULT_PRICE_SIMILARITY_PCT = None  # None = disabled (field left empty)
 
 # Update interval in minutes
 UPDATE_INTERVAL_MINUTES = 15

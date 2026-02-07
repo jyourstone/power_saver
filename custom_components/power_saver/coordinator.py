@@ -24,10 +24,7 @@ from .const import (
     CONF_NORDPOOL_TYPE,
     CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
-    DEFAULT_ALWAYS_CHEAP,
-    DEFAULT_ALWAYS_EXPENSIVE,
     DEFAULT_MIN_HOURS,
-    DEFAULT_PRICE_SIMILARITY_PCT,
     DEFAULT_ROLLING_WINDOW_HOURS,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
@@ -111,18 +108,12 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         # Read options
         options = self.config_entry.options
         min_hours = options.get(CONF_MIN_HOURS, DEFAULT_MIN_HOURS)
-        always_cheap_raw = options.get(CONF_ALWAYS_CHEAP, DEFAULT_ALWAYS_CHEAP)
-        always_expensive_raw = options.get(CONF_ALWAYS_EXPENSIVE, DEFAULT_ALWAYS_EXPENSIVE)
+        always_cheap = options.get(CONF_ALWAYS_CHEAP)
+        always_expensive = options.get(CONF_ALWAYS_EXPENSIVE)
         rolling_window_hours = options.get(
             CONF_ROLLING_WINDOW_HOURS, DEFAULT_ROLLING_WINDOW_HOURS
         )
-        price_similarity_pct_raw = options.get(
-            CONF_PRICE_SIMILARITY_PCT, DEFAULT_PRICE_SIMILARITY_PCT
-        )
-        # Convert 0 sentinel (UI "disabled" value) to None for the scheduler
-        always_cheap = always_cheap_raw if always_cheap_raw != 0 else None
-        always_expensive = always_expensive_raw if always_expensive_raw != 0 else None
-        price_similarity_pct = price_similarity_pct_raw if price_similarity_pct_raw != 0 else None
+        price_similarity_pct = options.get(CONF_PRICE_SIMILARITY_PCT)
 
         # Load activity history from persistent storage on first run
         if not self._history_loaded:

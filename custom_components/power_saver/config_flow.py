@@ -37,20 +37,17 @@ from .const import (
     CONF_NORDPOOL_TYPE,
     CONF_PRICE_SIMILARITY_PCT,
     CONF_ROLLING_WINDOW_HOURS,
-    DEFAULT_ALWAYS_CHEAP,
-    DEFAULT_ALWAYS_EXPENSIVE,
     DEFAULT_MIN_HOURS,
-    DEFAULT_PRICE_SIMILARITY_PCT,
     DEFAULT_ROLLING_WINDOW_HOURS,
     DOMAIN,
 )
 from .nordpool_adapter import auto_detect_nordpool
 
 
-def _optional_number(key: str, defaults: dict[str, Any], sentinel: float = 0.0) -> vol.Optional:
-    """Create vol.Optional with default only if the stored value differs from the sentinel."""
+def _optional_number(key: str, defaults: dict[str, Any]) -> vol.Optional:
+    """Create vol.Optional with default only if a value is stored."""
     val = defaults.get(key)
-    if val is not None and val != sentinel:
+    if val is not None:
         return vol.Optional(key, default=val)
     return vol.Optional(key)
 
@@ -150,9 +147,9 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                 options = {
                     CONF_MIN_HOURS: user_input[CONF_MIN_HOURS],
                     CONF_ROLLING_WINDOW_HOURS: user_input[CONF_ROLLING_WINDOW_HOURS],
-                    CONF_ALWAYS_CHEAP: user_input.get(CONF_ALWAYS_CHEAP, 0),
-                    CONF_ALWAYS_EXPENSIVE: user_input.get(CONF_ALWAYS_EXPENSIVE, 0),
-                    CONF_PRICE_SIMILARITY_PCT: user_input.get(CONF_PRICE_SIMILARITY_PCT, 0),
+                    CONF_ALWAYS_CHEAP: user_input.get(CONF_ALWAYS_CHEAP),
+                    CONF_ALWAYS_EXPENSIVE: user_input.get(CONF_ALWAYS_EXPENSIVE),
+                    CONF_PRICE_SIMILARITY_PCT: user_input.get(CONF_PRICE_SIMILARITY_PCT),
                     CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
                 }
 

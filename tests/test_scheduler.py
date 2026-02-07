@@ -46,11 +46,14 @@ class TestBuildSchedule:
 
     def test_basic_cheapest_slots_activated(self, now, today_prices):
         """The cheapest N slots should be activated."""
+        # Provide history to satisfy rolling window lookback
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
         schedule = build_schedule(
             raw_today=today_prices,
             raw_tomorrow=[],
             min_hours=2.5,  # 10 slots
             now=now,
+            prev_activity_history=history,
         )
 
         active = [s for s in schedule if s["status"] == "active"]
@@ -84,12 +87,15 @@ class TestBuildSchedule:
 
     def test_always_expensive_threshold(self, now, today_prices):
         """Slots at or above always_expensive should never be active."""
+        # Provide history to satisfy rolling window lookback
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 25)]
         schedule = build_schedule(
             raw_today=today_prices,
             raw_tomorrow=[],
             min_hours=6.0,  # 24 slots — would normally activate many
             now=now,
             always_expensive=0.30,
+            prev_activity_history=history,
         )
 
         # No slot at or above 0.30 should be active
@@ -123,32 +129,6 @@ class TestBuildSchedule:
 
         # Should have 48 slots total (24 today + 24 tomorrow)
         assert len(schedule) == 48
-
-    def test_standard_mode_resets_quota_for_tomorrow(self, now, today_prices, tomorrow_prices):
-        """In standard mode (no rolling window), each day gets its own quota."""
-        schedule = build_schedule(
-            raw_today=today_prices,
-            raw_tomorrow=tomorrow_prices,
-            min_hours=2.5,  # 10 slots per day
-            now=now,
-        )
-
-        today_base = datetime(2026, 2, 6, tzinfo=TZ)
-        tomorrow_base = datetime(2026, 2, 7, tzinfo=TZ)
-
-        today_active = [
-            s for s in schedule
-            if s["status"] == "active"
-            and datetime.fromisoformat(s["time"]).astimezone(TZ).date() == today_base.date()
-        ]
-        tomorrow_active = [
-            s for s in schedule
-            if s["status"] == "active"
-            and datetime.fromisoformat(s["time"]).astimezone(TZ).date() == tomorrow_base.date()
-        ]
-
-        assert len(today_active) == 10
-        assert len(tomorrow_active) == 10
 
     def test_rolling_window_shares_quota(self, now, today_prices, tomorrow_prices):
         """In rolling window mode, quota is shared across both days."""
@@ -216,12 +196,15 @@ class TestPriceSimilarityThreshold:
 
     def test_threshold_disabled_when_none(self, now, today_prices):
         """When threshold is None, only min_hours worth of cheapest slots activate."""
+        # Provide history to satisfy rolling window lookback
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
         schedule = build_schedule(
             raw_today=today_prices,
             raw_tomorrow=[],
             min_hours=2.5,
             now=now,
             price_similarity_pct=None,
+            prev_activity_history=history,
         )
 
         active = [s for s in schedule if s["status"] == "active"]

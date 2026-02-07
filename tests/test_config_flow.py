@@ -144,16 +144,17 @@ async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpoo
         {
             CONF_NAME: "Floor Heating",
             CONF_MIN_HOURS: 4.0,
-            CONF_ALWAYS_CHEAP: 0.0,
-            CONF_ALWAYS_EXPENSIVE: 0.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
-            CONF_PRICE_SIMILARITY_PCT: 0.0,
         },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE
     assert result["data"][CONF_NORDPOOL_SENSOR] == setup_native_nordpool.entity_id
+    # Optional fields left empty should store as None (disabled)
+    assert result["options"][CONF_ALWAYS_CHEAP] is None
+    assert result["options"][CONF_ALWAYS_EXPENSIVE] is None
+    assert result["options"][CONF_PRICE_SIMILARITY_PCT] is None
 
 
 async def test_no_nordpool_found(hass: HomeAssistant):
@@ -167,10 +168,7 @@ async def test_no_nordpool_found(hass: HomeAssistant):
         {
             CONF_NAME: "Test",
             CONF_MIN_HOURS: 2.5,
-            CONF_ALWAYS_CHEAP: 0.0,
-            CONF_ALWAYS_EXPENSIVE: 0.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
-            CONF_PRICE_SIMILARITY_PCT: 0.0,
         },
     )
 

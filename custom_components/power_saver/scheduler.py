@@ -107,7 +107,7 @@ def build_schedule(
     *,
     always_cheap: float | None = None,
     always_expensive: float | None = None,
-    rolling_window_hours: float | None = None,
+    rolling_window_hours: float = 24.0,
     prev_activity_history: list[str] | None = None,
     price_similarity_pct: float | None = None,
 ) -> list[dict]:
@@ -128,7 +128,7 @@ def build_schedule(
         now: Current datetime (timezone-aware).
         always_cheap: Price at or below which slots are always active. None = disabled.
         always_expensive: Price at or above which slots are never active. None = disabled.
-        rolling_window_hours: Rolling window size in hours. None = disabled.
+        rolling_window_hours: Rolling window size in hours (always >= 1).
         prev_activity_history: List of ISO timestamps of previously active slots.
         price_similarity_pct: Percentage threshold for price similarity. Slots within
             this percentage of the cheapest price are also activated. None = disabled.
@@ -142,12 +142,8 @@ def build_schedule(
     min_slots = int(min_hours * 4)
     schedule: list[dict] = []
 
-    # When rolling window constraint is enabled, use shared quota across days
-    use_rolling_window = (
-        rolling_window_hours is not None
-        and rolling_window_hours > 0
-        and min_hours > 0
-    )
+    # Rolling window is always enabled; only skip if min_hours is zero
+    use_rolling_window = min_hours > 0
 
     if use_rolling_window:
         _LOGGER.debug(
