@@ -14,6 +14,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.power_saver.const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
+    CONF_MIN_CONSECUTIVE_HOURS,
     CONF_MIN_HOURS,
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
@@ -116,6 +117,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
             CONF_ALWAYS_EXPENSIVE: 2.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
             CONF_PRICE_SIMILARITY_PCT: 10.0,
+            CONF_MIN_CONSECUTIVE_HOURS: 2,
         },
     )
 
@@ -131,6 +133,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
     assert result["options"][CONF_ALWAYS_EXPENSIVE] == 2.0
     assert result["options"][CONF_ROLLING_WINDOW_HOURS] == 24.0
     assert result["options"][CONF_PRICE_SIMILARITY_PCT] == 10.0
+    assert result["options"][CONF_MIN_CONSECUTIVE_HOURS] == 2
 
 
 async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpool):
@@ -155,6 +158,7 @@ async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpoo
     assert result["options"][CONF_ALWAYS_CHEAP] is None
     assert result["options"][CONF_ALWAYS_EXPENSIVE] is None
     assert result["options"][CONF_PRICE_SIMILARITY_PCT] is None
+    assert result["options"][CONF_MIN_CONSECUTIVE_HOURS] is None
 
 
 async def test_no_nordpool_found(hass: HomeAssistant):

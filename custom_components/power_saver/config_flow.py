@@ -31,6 +31,7 @@ from .const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
     CONF_CONTROLLED_ENTITIES,
+    CONF_MIN_CONSECUTIVE_HOURS,
     CONF_MIN_HOURS,
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
@@ -94,6 +95,12 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     unit_of_measurement="%",
                 )
             ),
+            _optional_number(CONF_MIN_CONSECUTIVE_HOURS, defaults): NumberSelector(
+                NumberSelectorConfig(
+                    min=1, max=24, step=1, mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="hours",
+                )
+            ),
             # Optional entity control
             vol.Optional(
                 CONF_CONTROLLED_ENTITIES,
@@ -150,6 +157,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ALWAYS_CHEAP: user_input.get(CONF_ALWAYS_CHEAP),
                     CONF_ALWAYS_EXPENSIVE: user_input.get(CONF_ALWAYS_EXPENSIVE),
                     CONF_PRICE_SIMILARITY_PCT: user_input.get(CONF_PRICE_SIMILARITY_PCT),
+                    CONF_MIN_CONSECUTIVE_HOURS: user_input.get(CONF_MIN_CONSECUTIVE_HOURS),
                     CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
                 }
 

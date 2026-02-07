@@ -23,6 +23,7 @@ build_schedule = scheduler.build_schedule
 find_current_slot = scheduler.find_current_slot
 find_next_change = scheduler.find_next_change
 build_activity_history = scheduler.build_activity_history
+_find_active_blocks = scheduler._find_active_blocks
 
 # TZ and make_nordpool_slot are defined in conftest.py, which pytest loads
 # automatically. We just need to define them here for direct use in tests.
@@ -481,3 +482,256 @@ class TestBuildActivityHistory:
 
         history = build_activity_history(schedule, prev, now, 24.0)
         assert history == sorted(history)
+
+
+class TestFindActiveBlocks:
+    """Tests for the _find_active_blocks helper."""
+
+    def test_single_block(self):
+        """Should find one contiguous block."""
+        schedule = [
+            {"status": "standby"},
+            {"status": "active"},
+            {"status": "active"},
+            {"status": "active"},
+            {"status": "standby"},
+        ]
+        blocks = _find_active_blocks(schedule)
+        assert blocks == [(1, 3)]
+
+    def test_multiple_blocks(self):
+        """Should find multiple separate blocks."""
+        schedule = [
+            {"status": "active"},
+            {"status": "active"},
+            {"status": "standby"},
+            {"status": "active"},
+            {"status": "standby"},
+            {"status": "active"},
+            {"status": "active"},
+        ]
+        blocks = _find_active_blocks(schedule)
+        assert blocks == [(0, 2), (3, 1), (5, 2)]
+
+    def test_no_active(self):
+        """Should return empty list when no active slots."""
+        schedule = [{"status": "standby"}, {"status": "standby"}]
+        assert _find_active_blocks(schedule) == []
+
+    def test_all_active(self):
+        """Should return one block spanning the entire schedule."""
+        schedule = [{"status": "active"}, {"status": "active"}, {"status": "active"}]
+        assert _find_active_blocks(schedule) == [(0, 3)]
+
+
+class TestMinConsecutiveHours:
+    """Tests for the minimum consecutive active hours feature."""
+
+    def test_short_block_gets_extended(self, now):
+        """A single short block should be extended to meet the minimum."""
+        # 5 hours: 1 active surrounded by standby, min_consecutive=3
+        prices = [
+            make_nordpool_slot(h, 0.50 if h != 2 else 0.01)
+            for h in range(5)
+        ]
+        # min_hours=1 activates 4 slots (1 hour). min_consecutive=3 hours.
+        # But effective = min(3, 1) = 1, so no extension. Let's use min_hours >= 3.
+        # Actually, with min_hours=1, only 4 slots activated = 1 hour.
+        # min_consecutive=3, effective = min(3, 1) = 1 hour = 4 slots.
+        # That means no extension needed (1 slot already >= 4 slots? no, 1 slot = 1 slot)
+        #
+        # Let's use hourly data directly and think in terms of slots:
+        # With 5 hourly slots and min_hours=0.25 (1 slot), the cheapest is hour 2 (0.01).
+        # Active: [2]. min_consecutive=2 means effective = min(2, 0.25) = 0.25 → 1 slot. No effect.
+        #
+        # Better test: use more data, min_hours high enough for scattered slots.
+        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+            0.50, 0.10, 0.50, 0.50, 0.50,  # hour 1 cheap, isolated
+            0.50, 0.50, 0.10, 0.50, 0.50,  # hour 7 cheap, isolated
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50,
+        ])]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=0.5,  # 2 slots → activates hours 1 and 7 (cheapest)
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=2,  # Each block must be >= 2 hours
+        )
+
+        # Find the active blocks
+        blocks = _find_active_blocks(schedule)
+        # All blocks should be at least 2 slots (2 hours with hourly data)
+        for start, length in blocks:
+            assert length >= 2, f"Block at index {start} has length {length}, expected >= 2"
+
+    def test_gap_filling_merges_blocks(self, now):
+        """Two nearby blocks with a small gap should merge when gap is filled."""
+        # Prices: cheap at hours 2-3 and 5-6, expensive at hour 4
+        # but not ALWAYS_EXPENSIVE, so gap can be filled
+        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+            0.50, 0.50, 0.01, 0.01, 0.30,  # hours 2-3 cheap, hour 4 moderate
+            0.01, 0.01, 0.50, 0.50, 0.50,  # hours 5-6 cheap
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50,
+        ])]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 17)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,  # 4 slots → activates hours 2, 3, 5, 6
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=3,  # Need blocks of at least 3
+        )
+
+        blocks = _find_active_blocks(schedule)
+        # The gap at hour 4 should be filled, creating one merged block
+        for start, length in blocks:
+            assert length >= 3, f"Block at index {start} has length {length}, expected >= 3"
+
+    def test_always_expensive_blocks_extension(self, now):
+        """Slots at or above always_expensive should never be activated for extension."""
+        # Two isolated cheap slots with an expensive slot between them
+        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+            0.50, 0.01, 5.00, 0.01, 0.50,  # hour 2 = very expensive
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50,
+        ])]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=0.5,  # 2 slots → hours 1 and 3
+            now=now,
+            always_expensive=4.00,
+            prev_activity_history=history,
+            min_consecutive_hours=3,  # Want 3 consecutive, but blocked by expensive
+        )
+
+        # The expensive slot (hour 2, price 5.00) must stay standby
+        for s in schedule:
+            if s["price"] >= 4.00:
+                assert s["status"] == "standby", f"Expensive slot at {s['time']} should be standby"
+
+    def test_disabled_when_none(self, now, today_prices):
+        """When min_consecutive_hours is None, no changes should be made."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+
+        schedule_without = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=None,
+        )
+        schedule_default = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+        )
+
+        # Both should produce identical schedules
+        assert len(schedule_without) == len(schedule_default)
+        for a, b in zip(schedule_without, schedule_default):
+            assert a["status"] == b["status"]
+            assert a["time"] == b["time"]
+
+    def test_capped_at_min_hours(self, now):
+        """Effective minimum should be capped at min_hours."""
+        # min_hours=1 (4 slots), min_consecutive=5 → effective = 1 hour (4 slots)
+        prices = [make_nordpool_slot(h, 0.50 if h != 10 else 0.01) for h in range(24)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,  # 4 slots
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=5,  # Requesting 5, but capped to 1
+        )
+
+        # Active count should not exceed much beyond min_hours
+        # The block at hour 10 should be 4 slots (1 hour), not 20 (5 hours)
+        blocks = _find_active_blocks(schedule)
+        for start, length in blocks:
+            # Each block should be at most slightly more than 4 slots
+            # (rolling window might add some, but not 20)
+            assert length <= 8, f"Block at {start} too long ({length}), min_consecutive should be capped"
+
+    def test_already_long_blocks_untouched(self, now, today_prices):
+        """Blocks already meeting the minimum should not be modified."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 25)]
+
+        schedule_without = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=6.0,  # 24 slots — forms large contiguous blocks
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=None,
+        )
+        schedule_with = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=6.0,
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=2,  # Blocks already > 2 hours
+        )
+
+        # Check that blocks in both schedules match
+        blocks_without = _find_active_blocks(schedule_without)
+        blocks_with = _find_active_blocks(schedule_with)
+
+        # If all blocks were already >= 2 hours, no changes expected
+        all_long = all(length >= 2 for _, length in blocks_without)
+        if all_long:
+            assert blocks_without == blocks_with
+
+    def test_extends_in_cheapest_direction(self, now):
+        """Extension should prefer the cheaper adjacent slot."""
+        # Hour 5 is active (cheap), left neighbor (h4) is 0.20, right neighbor (h6) is 0.80
+        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+            0.50, 0.50, 0.50, 0.50, 0.20,  # hour 4 = 0.20
+            0.01,                              # hour 5 = cheapest
+            0.80, 0.50, 0.50, 0.50, 0.50,   # hour 6 = 0.80
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50,
+        ])]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=0.5,  # 2 slots
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=2,
+        )
+
+        # Hour 4 (price 0.20) should be activated as extension, not hour 6 (0.80)
+        hour4_slot = next(
+            s for s in schedule
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 4
+        )
+        hour6_slot = next(
+            s for s in schedule
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
+        )
+        assert hour4_slot["status"] == "active", "Should extend toward cheaper neighbor (hour 4)"
+        # hour 6 might or might not be active depending on other slots, but hour 4 should be preferred

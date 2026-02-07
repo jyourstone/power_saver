@@ -11,6 +11,7 @@
           "always_cheap_price": "Always-cheap price threshold (optional)",
           "always_expensive_price": "Always-expensive price threshold (optional)",
           "price_similarity_pct": "Price similarity threshold (optional)",
+          "min_consecutive_hours": "Minimum consecutive active hours (optional)",
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
@@ -20,6 +21,7 @@
           "always_cheap_price": "Price below which the slot is always activated, regardless of other settings. Leave empty to disable.",
           "always_expensive_price": "Price at or above which the slot is never activated (safety cutoff). Leave empty to disable.",
           "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. For example, 20% means any slot up to 1.2x the cheapest price is also activated. Useful on flat-price days. Leave empty to disable.",
+          "min_consecutive_hours": "Minimum number of consecutive hours per active block. Prevents short on/off cycling for appliances like water heaters. Short blocks are extended by activating adjacent slots. Leave empty to disable.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
       }
@@ -43,6 +45,7 @@
           "always_cheap_price": "Always-cheap price threshold (optional)",
           "always_expensive_price": "Always-expensive price threshold (optional)",
           "price_similarity_pct": "Price similarity threshold (optional)",
+          "min_consecutive_hours": "Minimum consecutive active hours (optional)",
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
@@ -51,6 +54,7 @@
           "always_cheap_price": "Price below which slots are always activated. Leave empty to disable.",
           "always_expensive_price": "Price at or above which slots are never activated. Leave empty to disable.",
           "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. Leave empty to disable.",
+          "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to disable.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
       }

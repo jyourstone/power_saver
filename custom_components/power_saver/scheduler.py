@@ -110,6 +110,7 @@ def build_schedule(
     rolling_window_hours: float = 24.0,
     prev_activity_history: list[str] | None = None,
     price_similarity_pct: float | None = None,
+    min_consecutive_hours: float | None = None,
 ) -> list[dict]:
     """Build a schedule from Nordpool price data.
 
@@ -120,6 +121,7 @@ def build_schedule(
       of the cheapest price (e.g. 20% means slots up to 1.2x the cheapest)
     - Never activate if price >= always_expensive (safety cutoff)
     - If rolling window constraint is enabled, additional slots are activated as needed
+    - If min_consecutive_hours is set, short active blocks are extended to meet the minimum
 
     Args:
         raw_today: Nordpool raw_today attribute (list of dicts with start, end, value).
@@ -132,6 +134,8 @@ def build_schedule(
         prev_activity_history: List of ISO timestamps of previously active slots.
         price_similarity_pct: Percentage threshold for price similarity. Slots within
             this percentage of the cheapest price are also activated. None = disabled.
+        min_consecutive_hours: Minimum consecutive active hours per block. Short blocks
+            are extended by activating adjacent slots. None = disabled.
 
     Returns:
         List of schedule dicts: [{"price": float, "time": str, "status": str}, ...]
@@ -188,6 +192,12 @@ def build_schedule(
     if use_rolling_window:
         schedule = _apply_rolling_window_constraint(
             schedule, rolling_window_hours, min_hours, now, prev_activity_history
+        )
+
+    # Apply minimum consecutive hours constraint if enabled
+    if min_consecutive_hours is not None and min_consecutive_hours > 0:
+        schedule = _enforce_min_consecutive(
+            schedule, min_consecutive_hours, min_hours, always_expensive
         )
 
     # Log statistics
@@ -393,6 +403,111 @@ def _apply_rolling_window_constraint(
         _LOGGER.info(
             "Activated %d slots (%.1f hours) to satisfy rolling window constraint",
             slots_activated, slots_activated / 4,
+        )
+
+    return schedule
+
+
+def _find_active_blocks(schedule: list[dict]) -> list[tuple[int, int]]:
+    """Find all contiguous blocks of active slots.
+
+    Returns:
+        List of (start_index, length) tuples for each contiguous active block.
+    """
+    blocks = []
+    i = 0
+    while i < len(schedule):
+        if schedule[i].get("status") == "active":
+            start = i
+            while i < len(schedule) and schedule[i].get("status") == "active":
+                i += 1
+            blocks.append((start, i - start))
+        else:
+            i += 1
+    return blocks
+
+
+def _enforce_min_consecutive(
+    schedule: list[dict],
+    min_consecutive_hours: float,
+    min_hours: float,
+    always_expensive: float | None,
+) -> list[dict]:
+    """Ensure all active blocks are at least min_consecutive_hours long.
+
+    Extends short blocks by activating the cheapest adjacent standby slot,
+    one slot at a time. Iterates until all blocks meet the minimum or no
+    further extension is possible. Never activates slots at or above
+    always_expensive.
+
+    Args:
+        schedule: Time-sorted schedule (modified in-place).
+        min_consecutive_hours: Minimum consecutive hours per active block.
+        min_hours: Overall minimum hours (caps the consecutive requirement).
+        always_expensive: Price threshold; slots at/above this are never activated.
+
+    Returns:
+        The modified schedule.
+    """
+    effective_hours = min(min_consecutive_hours, min_hours)
+    effective_slots = int(effective_hours * 4)
+    if effective_slots <= 0:
+        return schedule
+
+    _LOGGER.debug(
+        "Enforcing minimum consecutive constraint: %d slots (%.1f hours)",
+        effective_slots, effective_hours,
+    )
+
+    slots_activated = 0
+    max_iterations = len(schedule)
+
+    for _ in range(max_iterations):
+        blocks = _find_active_blocks(schedule)
+        short_blocks = [(s, l) for s, l in blocks if l < effective_slots]
+        if not short_blocks:
+            break
+
+        # Process shortest block first (most likely to merge with neighbors)
+        short_blocks.sort(key=lambda b: b[1])
+        extended_any = False
+
+        for block_start, block_len in short_blocks:
+            block_end_idx = block_start + block_len  # first index AFTER the block
+
+            # Find candidates: immediate left and right standby neighbors
+            candidates = []
+            if block_start > 0 and schedule[block_start - 1].get("status") == "standby":
+                price = schedule[block_start - 1].get("price", 999)
+                if always_expensive is None or price < always_expensive:
+                    candidates.append(block_start - 1)
+
+            if block_end_idx < len(schedule) and schedule[block_end_idx].get("status") == "standby":
+                price = schedule[block_end_idx].get("price", 999)
+                if always_expensive is None or price < always_expensive:
+                    candidates.append(block_end_idx)
+
+            if not candidates:
+                continue
+
+            # Pick the cheapest adjacent slot
+            best = min(candidates, key=lambda i: schedule[i].get("price", 999))
+            schedule[best]["status"] = "active"
+            slots_activated += 1
+            _LOGGER.debug(
+                "Consecutive extension: activated %s at price %.3f",
+                schedule[best]["time"], schedule[best].get("price", 0),
+            )
+            extended_any = True
+            break  # Re-evaluate blocks after each activation
+
+        if not extended_any:
+            break
+
+    if slots_activated > 0:
+        _LOGGER.info(
+            "Activated %d slots (%.1f hours) to enforce minimum consecutive constraint",
+            slots_activated, slots_activated / 4.0,
         )
 
     return schedule
