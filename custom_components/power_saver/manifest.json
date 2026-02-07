@@ -1,9 +1,13 @@
 {
   "domain": "power_saver",
   "name": "Power Saver",
-  "codeowners": ["@jyourstone"],
+  "codeowners": [
+    "@jyourstone"
+  ],
   "config_flow": true,
-  "dependencies": ["nordpool"],
+  "dependencies": [
+    "nordpool"
+  ],
   "documentation": "https://github.com/jyourstone/power_saver",
   "integration_type": "service",
   "iot_class": "calculated",
