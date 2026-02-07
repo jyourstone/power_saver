@@ -23,16 +23,93 @@ def _to_datetime(value: str | datetime) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _compute_similarity_threshold(
+    sorted_slots: list[dict], price_similarity_pct: float | None
+) -> float | None:
+    """Compute the price similarity threshold for a day's slots.
+
+    Uses an additive offset based on the absolute value of the cheapest price,
+    which works correctly for both positive and negative prices.
+    For positive prices this is equivalent to: min_price * (1 + pct/100).
+    """
+    if not sorted_slots or not price_similarity_pct or price_similarity_pct <= 0:
+        return None
+    min_price = float(sorted_slots[0].get("value", 0))
+    if min_price == 0:
+        return None
+    offset = (price_similarity_pct / 100) * abs(min_price)
+    threshold = min_price + offset
+    _LOGGER.debug(
+        "Price similarity threshold: %.3f (cheapest: %.3f, pct: %.1f%%, strategy: %s)",
+        threshold, min_price, price_similarity_pct,
+        "additive" if min_price < 0 else "multiplicative",
+    )
+    return threshold
+
+
+def _process_day_slots(
+    sorted_slots: list[dict],
+    activated_count: int,
+    threshold: float | None,
+    always_cheap: float | None,
+    always_expensive: float | None,
+    now: datetime,
+) -> tuple[list[dict], int]:
+    """Process a day's price-sorted slots into schedule entries.
+
+    Args:
+        sorted_slots: Slots sorted by price (cheapest first).
+        activated_count: Remaining activation quota.
+        threshold: Price similarity threshold, or None if disabled.
+        always_cheap: Price at or below which slots are always active. None = disabled.
+        always_expensive: Price at or above which slots are never active. None = disabled.
+        now: Current datetime for timezone conversion.
+
+    Returns:
+        Tuple of (schedule_entries, remaining_activated_count).
+    """
+    entries = []
+    for slot in sorted_slots:
+        try:
+            start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
+            price = float(slot.get("value", 0))
+
+            is_within_threshold = threshold is not None and price <= threshold
+            is_cheap = always_cheap is not None and price <= always_cheap
+            is_expensive = always_expensive is not None and price >= always_expensive
+            is_active = (
+                (is_cheap or activated_count > 0 or is_within_threshold)
+                and not is_expensive
+            )
+            status = "active" if is_active else "standby"
+
+            entries.append({
+                "price": round(price, 3),
+                "time": start.isoformat(),
+                "status": status,
+            })
+
+            if is_active:
+                activated_count -= 1
+
+        except (ValueError, TypeError, KeyError) as e:
+            _LOGGER.warning("Error processing slot: %s", e)
+            continue
+
+    return entries, activated_count
+
+
 def build_schedule(
     raw_today: list[dict],
     raw_tomorrow: list[dict],
     min_hours: float,
-    always_cheap: float,
-    always_expensive: float,
-    rolling_window_hours: float | None,
     now: datetime,
+    *,
+    always_cheap: float | None = None,
+    always_expensive: float | None = None,
+    rolling_window_hours: float | None = None,
     prev_activity_history: list[str] | None = None,
-    price_similarity_pct: float = 0.0,
+    price_similarity_pct: float | None = None,
 ) -> list[dict]:
     """Build a schedule from Nordpool price data.
 
@@ -41,20 +118,20 @@ def build_schedule(
     - Activate any slots with price <= always_cheap regardless of quota
     - If price_similarity_pct > 0, also activate slots within that percentage
       of the cheapest price (e.g. 20% means slots up to 1.2x the cheapest)
-    - Never activate if price >= always_expensive (safety cutoff, disabled if <= 0)
+    - Never activate if price >= always_expensive (safety cutoff)
     - If rolling window constraint is enabled, additional slots are activated as needed
 
     Args:
         raw_today: Nordpool raw_today attribute (list of dicts with start, end, value).
         raw_tomorrow: Nordpool raw_tomorrow attribute (may be empty).
         min_hours: Minimum active hours per day.
-        always_cheap: Price threshold below which slots are always active.
-        always_expensive: Price at/above which slots are never active. 0 = disabled.
-        rolling_window_hours: Rolling window size in hours. None or 0 = disabled.
         now: Current datetime (timezone-aware).
+        always_cheap: Price at or below which slots are always active. None = disabled.
+        always_expensive: Price at or above which slots are never active. None = disabled.
+        rolling_window_hours: Rolling window size in hours. None = disabled.
         prev_activity_history: List of ISO timestamps of previously active slots.
         price_similarity_pct: Percentage threshold for price similarity. Slots within
-            this percentage of the cheapest price are also activated. 0 = disabled.
+            this percentage of the cheapest price are also activated. None = disabled.
 
     Returns:
         List of schedule dicts: [{"price": float, "time": str, "status": str}, ...]
@@ -72,9 +149,6 @@ def build_schedule(
         and min_hours > 0
     )
 
-    # always_expensive acts as upper limit only when positive
-    has_upper_limit = always_expensive > 0
-
     if use_rolling_window:
         _LOGGER.debug(
             "Rolling window mode: base activation for min_slots (%d) + always_cheap (<=%s). "
@@ -87,50 +161,15 @@ def build_schedule(
             min_slots, always_cheap,
         )
 
-    # Compute price similarity threshold
-    use_similarity = price_similarity_pct > 0
-
     # Process today's slots (sorted by price, cheapest first)
     sorted_today = sorted(raw_today, key=lambda x: x.get("value", 999))
     activated_count = min_slots
-
-    # Calculate threshold price for today based on cheapest slot
-    today_threshold = None
-    if use_similarity and sorted_today:
-        min_price_today = float(sorted_today[0].get("value", 0))
-        if min_price_today > 0:
-            today_threshold = min_price_today * (1 + price_similarity_pct / 100)
-            _LOGGER.debug(
-                "Price similarity threshold for today: %.3f (cheapest: %.3f, pct: %.1f%%)",
-                today_threshold, min_price_today, price_similarity_pct,
-            )
-
-    for slot in sorted_today:
-        try:
-            start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
-            price = float(slot.get("value", 0))
-
-            is_within_threshold = (
-                today_threshold is not None and price <= today_threshold
-            )
-            is_active = (
-                (price <= always_cheap or activated_count > 0 or is_within_threshold)
-                and (not has_upper_limit or price < always_expensive)
-            )
-            status = "active" if is_active else "standby"
-
-            schedule.append({
-                "price": round(price, 3),
-                "time": start.isoformat(),
-                "status": status,
-            })
-
-            if is_active:
-                activated_count -= 1
-
-        except (ValueError, TypeError, KeyError) as e:
-            _LOGGER.warning("Error processing today slot: %s", e)
-            continue
+    today_threshold = _compute_similarity_threshold(sorted_today, price_similarity_pct)
+    today_entries, activated_count = _process_day_slots(
+        sorted_today, activated_count, today_threshold,
+        always_cheap, always_expensive, now,
+    )
+    schedule.extend(today_entries)
 
     # Process tomorrow's slots if available
     if raw_tomorrow:
@@ -139,44 +178,12 @@ def build_schedule(
         # In standard mode, reset to give each day its own quota
         if not use_rolling_window:
             activated_count = min_slots
-
-        # Calculate threshold price for tomorrow based on tomorrow's cheapest slot
-        tomorrow_threshold = None
-        if use_similarity and sorted_tomorrow:
-            min_price_tomorrow = float(sorted_tomorrow[0].get("value", 0))
-            if min_price_tomorrow > 0:
-                tomorrow_threshold = min_price_tomorrow * (1 + price_similarity_pct / 100)
-                _LOGGER.debug(
-                    "Price similarity threshold for tomorrow: %.3f (cheapest: %.3f, pct: %.1f%%)",
-                    tomorrow_threshold, min_price_tomorrow, price_similarity_pct,
-                )
-
-        for slot in sorted_tomorrow:
-            try:
-                start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
-                price = float(slot.get("value", 0))
-
-                is_within_threshold = (
-                    tomorrow_threshold is not None and price <= tomorrow_threshold
-                )
-                is_active = (
-                    (price <= always_cheap or activated_count > 0 or is_within_threshold)
-                    and (not has_upper_limit or price < always_expensive)
-                )
-                status = "active" if is_active else "standby"
-
-                schedule.append({
-                    "price": round(price, 3),
-                    "time": start.isoformat(),
-                    "status": status,
-                })
-
-                if is_active:
-                    activated_count -= 1
-
-            except (ValueError, TypeError, KeyError) as e:
-                _LOGGER.warning("Error processing tomorrow slot: %s", e)
-                continue
+        tomorrow_threshold = _compute_similarity_threshold(sorted_tomorrow, price_similarity_pct)
+        tomorrow_entries, activated_count = _process_day_slots(
+            sorted_tomorrow, activated_count, tomorrow_threshold,
+            always_cheap, always_expensive, now,
+        )
+        schedule.extend(tomorrow_entries)
 
     # Sort by time
     schedule.sort(key=lambda x: x["time"])

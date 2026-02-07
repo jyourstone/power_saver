@@ -47,36 +47,27 @@ from .const import (
 from .nordpool_adapter import auto_detect_nordpool
 
 
+def _optional_number(key: str, defaults: dict[str, Any], sentinel: float = 0.0) -> vol.Optional:
+    """Create vol.Optional with default only if the stored value differs from the sentinel."""
+    val = defaults.get(key)
+    if val is not None and val != sentinel:
+        return vol.Optional(key, default=val)
+    return vol.Optional(key)
+
+
 def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Build the schema for tunable options."""
     if defaults is None:
         defaults = {}
     return vol.Schema(
         {
+            # Required scheduling parameters
             vol.Required(
                 CONF_MIN_HOURS,
                 default=defaults.get(CONF_MIN_HOURS, DEFAULT_MIN_HOURS),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=0, max=24, step=0.25, mode=NumberSelectorMode.BOX
-                )
-            ),
-            vol.Required(
-                CONF_ALWAYS_CHEAP,
-                default=defaults.get(CONF_ALWAYS_CHEAP, DEFAULT_ALWAYS_CHEAP),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="SEK/kWh",
-                )
-            ),
-            vol.Required(
-                CONF_ALWAYS_EXPENSIVE,
-                default=defaults.get(CONF_ALWAYS_EXPENSIVE, DEFAULT_ALWAYS_EXPENSIVE),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="SEK/kWh",
                 )
             ),
             vol.Required(
@@ -87,15 +78,26 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     min=1, max=48, step=0.5, mode=NumberSelectorMode.BOX
                 )
             ),
-            vol.Required(
-                CONF_PRICE_SIMILARITY_PCT,
-                default=defaults.get(CONF_PRICE_SIMILARITY_PCT, DEFAULT_PRICE_SIMILARITY_PCT),
-            ): NumberSelector(
+            # Optional price thresholds (empty = disabled)
+            _optional_number(CONF_ALWAYS_CHEAP, defaults): NumberSelector(
+                NumberSelectorConfig(
+                    min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="SEK/kWh",
+                )
+            ),
+            _optional_number(CONF_ALWAYS_EXPENSIVE, defaults): NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="SEK/kWh",
+                )
+            ),
+            _optional_number(CONF_PRICE_SIMILARITY_PCT, defaults): NumberSelector(
                 NumberSelectorConfig(
                     min=0, max=100, step=1, mode=NumberSelectorMode.BOX,
                     unit_of_measurement="%",
                 )
             ),
+            # Optional entity control
             vol.Optional(
                 CONF_CONTROLLED_ENTITIES,
                 default=defaults.get(CONF_CONTROLLED_ENTITIES, []),
@@ -147,10 +149,10 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
                 options = {
                     CONF_MIN_HOURS: user_input[CONF_MIN_HOURS],
-                    CONF_ALWAYS_CHEAP: user_input[CONF_ALWAYS_CHEAP],
-                    CONF_ALWAYS_EXPENSIVE: user_input[CONF_ALWAYS_EXPENSIVE],
                     CONF_ROLLING_WINDOW_HOURS: user_input[CONF_ROLLING_WINDOW_HOURS],
-                    CONF_PRICE_SIMILARITY_PCT: user_input[CONF_PRICE_SIMILARITY_PCT],
+                    CONF_ALWAYS_CHEAP: user_input.get(CONF_ALWAYS_CHEAP, 0),
+                    CONF_ALWAYS_EXPENSIVE: user_input.get(CONF_ALWAYS_EXPENSIVE, 0),
+                    CONF_PRICE_SIMILARITY_PCT: user_input.get(CONF_PRICE_SIMILARITY_PCT, 0),
                     CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
                 }
 

@@ -35,8 +35,27 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture
-def setup_hacs_nordpool(hass: HomeAssistant):
+async def setup_hacs_nordpool(hass: HomeAssistant):
     """Set up a fake HACS Nordpool sensor with raw_today attribute."""
+    # Create a mock config entry for the nordpool HACS integration
+    nordpool_config_entry = MockConfigEntry(
+        domain="nordpool",
+        title="Nordpool HACS",
+        entry_id="nordpool_hacs_entry",
+    )
+    nordpool_config_entry.add_to_hass(hass)
+
+    # Register the entity in the entity registry (auto_detect searches the registry)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        domain="sensor",
+        platform="nordpool",
+        unique_id="kwh_se4_sek",
+        suggested_object_id="nordpool_kwh_se4_sek",
+        config_entry=nordpool_config_entry,
+    )
+
+    # Set the state with raw_today attribute (HACS signature)
     hass.states.async_set(
         NORDPOOL_ENTITY,
         "0.50",

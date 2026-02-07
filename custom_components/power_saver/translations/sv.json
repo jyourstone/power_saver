@@ -7,19 +7,19 @@
         "data": {
           "name": "Namn",
           "min_hours": "Minsta antal aktiva timmar",
-          "always_cheap_price": "Alltid billigt prisgräns",
-          "always_expensive_price": "Alltid dyrt prisgräns",
           "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
-          "price_similarity_pct": "Prislikhetströskel",
+          "always_cheap_price": "Alltid billigt prisgräns (valfritt)",
+          "always_expensive_price": "Alltid dyrt prisgräns (valfritt)",
+          "price_similarity_pct": "Prislikhetströskel (valfritt)",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
-          "name": "Ett beskrivande namn för denna integrationspost (t.ex. 'Varmvattenberedare', 'Golvvärme').",
+          "name": "Ett beskrivande namn för denna integrationspost (t.ex. 'Varmvattenberedare').",
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster. De billigaste tidsluckorna väljs.",
-          "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras, oavsett andra inställningar. Sätt till 0 för att inaktivera.",
-          "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. Sätt till 0 för att inaktivera.",
           "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre värden förhindrar långa inaktiva perioder. 24 = optimera över hela dygnet.",
-          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. T.ex. 20 % innebär att tidsluckor upp till 1,2x billigaste priset också aktiveras. Användbart vid jämna priser. 0 = inaktiverat.",
+          "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras, oavsett andra inställningar. Lämna tomt för att inaktivera.",
+          "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. Lämna tomt för att inaktivera.",
+          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. T.ex. 20 % innebär att tidsluckor upp till 1,2x billigaste priset också aktiveras. Användbart vid jämna priser. Lämna tomt för att inaktivera.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
       }
@@ -39,18 +39,18 @@
         "description": "Justera schemaläggningsparametrar. Ändringar träder i kraft omedelbart.",
         "data": {
           "min_hours": "Minsta antal aktiva timmar",
-          "always_cheap_price": "Alltid billigt prisgräns",
-          "always_expensive_price": "Alltid dyrt prisgräns",
           "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
-          "price_similarity_pct": "Prislikhetströskel",
+          "always_cheap_price": "Alltid billigt prisgräns (valfritt)",
+          "always_expensive_price": "Alltid dyrt prisgräns (valfritt)",
+          "price_similarity_pct": "Prislikhetströskel (valfritt)",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",
-          "always_cheap_price": "Pris under vilket tidsluckor alltid aktiveras. 0 = inaktiverat.",
-          "always_expensive_price": "Pris vid eller över vilket tidsluckor aldrig aktiveras. 0 = inaktiverat.",
           "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre = jämnare fördelning. 24 = hela dygnet.",
-          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. 0 = inaktiverat.",
+          "always_cheap_price": "Pris under vilket tidsluckor alltid aktiveras. Lämna tomt för att inaktivera.",
+          "always_expensive_price": "Pris vid eller över vilket tidsluckor aldrig aktiveras. Lämna tomt för att inaktivera.",
+          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. Lämna tomt för att inaktivera.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
       }
