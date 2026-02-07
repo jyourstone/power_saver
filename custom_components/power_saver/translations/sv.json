@@ -3,10 +3,9 @@
     "step": {
       "user": {
         "title": "Konfigurera Power Saver",
-        "description": "Konfigurera en Power Saver-instans för en enhet. Du kan lägga till flera instanser för olika enheter.",
+        "description": "Konfigurera en Power Saver-instans för en enhet. Nordpool-sensorn upptäcks automatiskt (HACS eller inbyggd). Du kan lägga till flera instanser för olika enheter.",
         "data": {
           "name": "Namn",
-          "nordpool_sensor": "Nordpool prissensor",
           "min_hours": "Minsta antal aktiva timmar",
           "always_cheap_price": "Alltid billigt prisgräns",
           "always_expensive_price": "Alltid dyrt prisgräns",
@@ -15,7 +14,6 @@
         },
         "data_description": {
           "name": "Ett beskrivande namn för denna instans (t.ex. 'Varmvattenberedare', 'Golvvärme').",
-          "nordpool_sensor": "Nordpool-sensorn som tillhandahåller priser för el.",
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster. De billigaste tidsluckorna väljs.",
           "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras, oavsett andra inställningar. Sätt till 0 för att inaktivera.",
           "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. Sätt till 0 för att inaktivera.",
@@ -25,7 +23,7 @@
       }
     },
     "error": {
-      "invalid_nordpool_sensor": "Den valda sensorn verkar inte vara en Nordpool-sensor (saknar raw_today-attribut).",
+      "nordpool_not_found": "Ingen Nordpool-integration hittades. Konfigurera Nordpool-integrationen (HACS eller inbyggd) innan du konfigurerar Power Saver.",
       "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad."
     },
     "abort": {
