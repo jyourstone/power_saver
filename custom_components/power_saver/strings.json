@@ -3,8 +3,9 @@
     "step": {
       "user": {
         "title": "Set up Power Saver",
-        "description": "Configure a power saver instance for an appliance. The Nordpool sensor is detected automatically (HACS or native). You can add multiple instances for different appliances.",
+        "description": "Configure a power saver instance for an appliance. Select which Nord Pool sensor to use for price data. You can add multiple instances for different appliances.",
         "data": {
+          "nordpool_sensor": "Nord Pool sensor",
           "name": "Name",
           "selection_mode": "Mode",
           "min_hours": "Minimum active hours",
@@ -16,6 +17,7 @@
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
+          "nordpool_sensor": "The Nord Pool sensor to use for electricity prices. If you have multiple Nord Pool entries (e.g., different price regions), select the one for this appliance.",
           "name": "A descriptive name for this instance (e.g., 'Water Heater').",
           "selection_mode": "Choose whether to activate the cheapest hours (default) or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
           "min_hours": "Minimum number of hours to keep active within each rolling window.",
@@ -29,7 +31,7 @@
       }
     },
     "error": {
-      "nordpool_not_found": "No Nordpool integration found. Please set up the Nordpool integration (HACS or native) before configuring Power Saver.",
+      "nordpool_not_found": "No Nord Pool integration found. Please set up the Nord Pool integration (HACS or native) before configuring Power Saver.",
       "already_configured": "A power saver with this name and sensor is already configured."
     },
     "abort": {
@@ -42,6 +44,7 @@
         "title": "Power Saver Options",
         "description": "Adjust scheduling parameters. Changes take effect immediately.",
         "data": {
+          "nordpool_sensor": "Nord Pool sensor",
           "selection_mode": "Mode",
           "min_hours": "Minimum active hours",
           "rolling_window_hours": "Rolling window size (hours)",
@@ -52,6 +55,7 @@
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
+          "nordpool_sensor": "The Nord Pool sensor to use for electricity prices.",
           "selection_mode": "Choose whether to activate the cheapest hours or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
           "min_hours": "Minimum number of hours to keep active within each rolling window.",
           "rolling_window_hours": "Time window in hours to spread active slots across. Smaller = more evenly spread. 24 = full day.",

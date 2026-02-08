@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -14,8 +15,10 @@ from homeassistant.config_entries import (
 
 try:
     from homeassistant.config_entries import OptionsFlowWithReload
+    _LEGACY_OPTIONS_FLOW = False
 except ImportError:
     from homeassistant.config_entries import OptionsFlowWithConfigEntry as OptionsFlowWithReload
+    _LEGACY_OPTIONS_FLOW = True
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
@@ -49,7 +52,9 @@ from .const import (
     SELECTION_MODE_CHEAPEST,
     SELECTION_MODE_MOST_EXPENSIVE,
 )
-from .nordpool_adapter import auto_detect_nordpool
+from .nordpool_adapter import detect_nordpool_type, find_all_nordpool_sensors
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _optional_number(key: str, defaults: dict[str, Any]) -> vol.Optional:
@@ -151,6 +156,8 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> PowerSaverOptionsFlow:
         """Get the options flow for this handler."""
+        if _LEGACY_OPTIONS_FLOW:
+            return PowerSaverOptionsFlow(config_entry)
         return PowerSaverOptionsFlow()
 
     async def async_step_user(
@@ -159,11 +166,17 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
+        # Detect all available Nord Pool sensors
+        all_sensors = find_all_nordpool_sensors(self.hass)
+
         if user_input is not None:
-            # Auto-detect Nordpool sensor
-            nordpool_entity, nordpool_type = auto_detect_nordpool(self.hass)
-            if nordpool_entity is None:
+            nordpool_entity = user_input.get(CONF_NORDPOOL_SENSOR)
+            if not nordpool_entity:
                 errors["base"] = "nordpool_not_found"
+            else:
+                nordpool_type = detect_nordpool_type(self.hass, nordpool_entity)
+                if nordpool_type == "unknown":
+                    errors["base"] = "nordpool_not_found"
 
             if not errors:
                 # Set unique ID to prevent duplicates
@@ -195,9 +208,30 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     options=options,
                 )
 
-        # Build the schema (name + options fields, no sensor picker)
+        if not all_sensors:
+            errors["base"] = "nordpool_not_found"
+
+        # Build sensor selector options with friendly labels
+        sensor_options = [
+            SelectOptionDict(value=entity_id, label=label)
+            for entity_id, _, label in all_sensors
+        ]
+
+        # Pre-select if only one sensor exists
+        sensor_default: str | vol.Undefined = vol.UNDEFINED
+        if len(all_sensors) == 1:
+            sensor_default = all_sensors[0][0]
+
         schema = vol.Schema(
             {
+                vol.Required(
+                    CONF_NORDPOOL_SENSOR, default=sensor_default
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=sensor_options,
+                        mode="dropdown",
+                    )
+                ),
                 vol.Required(CONF_NAME): TextSelector(),
             }
         ).extend(_options_schema().schema)
@@ -216,10 +250,67 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            # Handle Nord Pool sensor change (stored in data, not options)
+            new_sensor = user_input.pop(CONF_NORDPOOL_SENSOR, None)
+            current_sensor = self.config_entry.data.get(CONF_NORDPOOL_SENSOR)
+
+            if new_sensor and new_sensor != current_sensor:
+                new_type = detect_nordpool_type(self.hass, new_sensor)
+                if new_type == "unknown":
+                    _LOGGER.warning(
+                        "Selected Nord Pool sensor %s could not be validated",
+                        new_sensor,
+                    )
+                    errors[CONF_NORDPOOL_SENSOR] = "nordpool_not_found"
+                else:
+                    new_data = dict(self.config_entry.data)
+                    new_data[CONF_NORDPOOL_SENSOR] = new_sensor
+                    new_data[CONF_NORDPOOL_TYPE] = new_type
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry, data=new_data
+                    )
+
+            if not errors:
+                return self.async_create_entry(data=user_input)
+
+        # Build sensor selector for the options form
+        all_sensors = find_all_nordpool_sensors(self.hass)
+        current_sensor = self.config_entry.data.get(CONF_NORDPOOL_SENSOR, "")
+
+        sensor_options = [
+            SelectOptionDict(value=entity_id, label=label)
+            for entity_id, _, label in all_sensors
+        ]
+
+        # Ensure the current sensor is in the list (even if no longer detected)
+        current_in_list = any(s[0] == current_sensor for s in all_sensors)
+        if not current_in_list and current_sensor:
+            sensor_options.append(
+                SelectOptionDict(value=current_sensor, label=current_sensor)
+            )
+
+        sensor_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NORDPOOL_SENSOR, default=current_sensor
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=sensor_options,
+                        mode="dropdown",
+                    )
+                ),
+            }
+        )
+
+        schema = sensor_schema.extend(
+            _options_schema(self.config_entry.options).schema
+        )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_options_schema(self.config_entry.options),
+            data_schema=schema,
+            errors=errors,
         )
