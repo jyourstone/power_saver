@@ -197,7 +197,7 @@ async def _async_fetch_native_date(
     return _convert_native_response(response)
 
 
-def _convert_native_response(response: dict) -> list[dict]:
+def _convert_native_response(response: dict | list) -> list[dict]:
     """Convert native Nord Pool service response to HACS-compatible format.
 
     Native response is grouped by area: {"SE4": [{"start": ..., "end": ..., "price": ...}, ...]}

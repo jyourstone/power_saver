@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from homeassistant import config_entries
@@ -249,7 +251,7 @@ async def test_multiple_sensors_user_selects(
     hass: HomeAssistant, setup_two_native_nordpool
 ):
     """Test that user can select between multiple Nordpool sensors."""
-    entity_se4, entity_se3 = setup_two_native_nordpool
+    _entity_se4, entity_se3 = setup_two_native_nordpool
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -317,4 +319,55 @@ async def test_options_flow_change_nordpool_sensor(
 
     # Verify data was updated with new sensor
     assert config_entry.data[CONF_NORDPOOL_SENSOR] == entity_se3.entity_id
+    assert config_entry.data[CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE
+
+
+async def test_options_flow_rejects_invalid_sensor(
+    hass: HomeAssistant, setup_two_native_nordpool
+):
+    """Test that options flow rejects a sensor whose type can't be detected."""
+    entity_se4, entity_se3 = setup_two_native_nordpool
+
+    # Create an existing config entry using SE4
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Water Heater",
+        data={
+            CONF_NORDPOOL_SENSOR: entity_se4.entity_id,
+            CONF_NORDPOOL_TYPE: NORDPOOL_TYPE_NATIVE,
+            CONF_NAME: "Water Heater",
+        },
+        options={
+            CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
+            CONF_MIN_HOURS: 4.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+        },
+    )
+    config_entry.add_to_hass(hass)
+
+    # Start options flow (renders dropdown with both SE4 and SE3)
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+
+    # Simulate: SE3 sensor becomes undetectable between form display and submission
+    with patch(
+        "custom_components.power_saver.config_flow.detect_nordpool_type",
+        return_value="unknown",
+    ):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_NORDPOOL_SENSOR: entity_se3.entity_id,
+                CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
+                CONF_MIN_HOURS: 4.0,
+                CONF_ROLLING_WINDOW_HOURS: 24.0,
+            },
+        )
+
+    # Should re-show the form with an error, not create an entry
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"][CONF_NORDPOOL_SENSOR] == "nordpool_not_found"
+
+    # Verify original data was NOT changed
+    assert config_entry.data[CONF_NORDPOOL_SENSOR] == entity_se4.entity_id
     assert config_entry.data[CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE

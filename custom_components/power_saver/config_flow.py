@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -52,6 +53,8 @@ from .const import (
     SELECTION_MODE_MOST_EXPENSIVE,
 )
 from .nordpool_adapter import detect_nordpool_type, find_all_nordpool_sensors
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _optional_number(key: str, defaults: dict[str, Any]) -> vol.Optional:
@@ -247,6 +250,8 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
             # Handle Nord Pool sensor change (stored in data, not options)
             new_sensor = user_input.pop(CONF_NORDPOOL_SENSOR, None)
@@ -254,14 +259,22 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
 
             if new_sensor and new_sensor != current_sensor:
                 new_type = detect_nordpool_type(self.hass, new_sensor)
-                new_data = dict(self.config_entry.data)
-                new_data[CONF_NORDPOOL_SENSOR] = new_sensor
-                new_data[CONF_NORDPOOL_TYPE] = new_type
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data
-                )
+                if new_type == "unknown":
+                    _LOGGER.warning(
+                        "Selected Nord Pool sensor %s could not be validated",
+                        new_sensor,
+                    )
+                    errors[CONF_NORDPOOL_SENSOR] = "nordpool_not_found"
+                else:
+                    new_data = dict(self.config_entry.data)
+                    new_data[CONF_NORDPOOL_SENSOR] = new_sensor
+                    new_data[CONF_NORDPOOL_TYPE] = new_type
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry, data=new_data
+                    )
 
-            return self.async_create_entry(data=user_input)
+            if not errors:
+                return self.async_create_entry(data=user_input)
 
         # Build sensor selector for the options form
         all_sensors = find_all_nordpool_sensors(self.hass)
@@ -299,4 +312,5 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
         return self.async_show_form(
             step_id="init",
             data_schema=schema,
+            errors=errors,
         )
