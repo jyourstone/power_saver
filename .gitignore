@@ -4,6 +4,25 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Distribution
+dist/
+*.egg-info/
+
 # Dev environment - HA generates these in dev/config/
 dev/config/*
 !dev/config/configuration.yaml
