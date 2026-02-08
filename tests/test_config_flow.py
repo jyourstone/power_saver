@@ -30,6 +30,7 @@ from custom_components.power_saver.const import (
 )
 
 NORDPOOL_ENTITY = "sensor.nordpool_kwh_se4_sek"
+NORDPOOL_ENTITY_SE3 = "sensor.nordpool_kwh_se3_sek"
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +103,50 @@ async def setup_native_nordpool(hass: HomeAssistant):
     return entity_entry
 
 
+@pytest.fixture
+async def setup_two_native_nordpool(hass: HomeAssistant):
+    """Set up two native Nordpool sensors (different price regions)."""
+    registry = er.async_get(hass)
+
+    # First config entry (SE4)
+    entry_se4 = MockConfigEntry(
+        domain="nordpool",
+        title="Nord Pool SE4",
+        entry_id="nordpool_se4_entry",
+    )
+    entry_se4.add_to_hass(hass)
+    entity_se4 = registry.async_get_or_create(
+        domain="sensor",
+        platform="nordpool",
+        unique_id="se4_sek_current_price",
+        suggested_object_id="nordpool_kwh_se4_sek",
+        config_entry=entry_se4,
+    )
+    hass.states.async_set(
+        entity_se4.entity_id, "0.45", {"unit_of_measurement": "SEK/kWh"}
+    )
+
+    # Second config entry (SE3)
+    entry_se3 = MockConfigEntry(
+        domain="nordpool",
+        title="Nord Pool SE3",
+        entry_id="nordpool_se3_entry",
+    )
+    entry_se3.add_to_hass(hass)
+    entity_se3 = registry.async_get_or_create(
+        domain="sensor",
+        platform="nordpool",
+        unique_id="se3_sek_current_price",
+        suggested_object_id="nordpool_kwh_se3_sek",
+        config_entry=entry_se3,
+    )
+    hass.states.async_set(
+        entity_se3.entity_id, "0.50", {"unit_of_measurement": "SEK/kWh"}
+    )
+
+    return entity_se4, entity_se3
+
+
 async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
     """Test a successful config flow with HACS Nordpool auto-detected."""
     result = await hass.config_entries.flow.async_init(
@@ -114,6 +159,7 @@ async def test_full_config_flow_hacs(hass: HomeAssistant, setup_hacs_nordpool):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
+            CONF_NORDPOOL_SENSOR: NORDPOOL_ENTITY,
             CONF_NAME: "Water Heater",
             CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
             CONF_MIN_HOURS: 6.0,
@@ -150,6 +196,7 @@ async def test_full_config_flow_native(hass: HomeAssistant, setup_native_nordpoo
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
+            CONF_NORDPOOL_SENSOR: setup_native_nordpool.entity_id,
             CONF_NAME: "Floor Heating",
             CONF_MIN_HOURS: 4.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
@@ -175,6 +222,7 @@ async def test_config_flow_most_expensive_mode(hass: HomeAssistant, setup_hacs_n
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
+            CONF_NORDPOOL_SENSOR: NORDPOOL_ENTITY,
             CONF_NAME: "Grid Sell",
             CONF_SELECTION_MODE: SELECTION_MODE_MOST_EXPENSIVE,
             CONF_MIN_HOURS: 3.0,
@@ -187,20 +235,38 @@ async def test_config_flow_most_expensive_mode(hass: HomeAssistant, setup_hacs_n
 
 
 async def test_no_nordpool_found(hass: HomeAssistant):
-    """Test validation when no Nordpool integration is present."""
+    """Test that the form shows an error when no Nordpool integration is present."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == "nordpool_not_found"
+
+
+async def test_multiple_sensors_user_selects(
+    hass: HomeAssistant, setup_two_native_nordpool
+):
+    """Test that user can select between multiple Nordpool sensors."""
+    entity_se4, entity_se3 = setup_two_native_nordpool
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+
+    # User selects the SE3 sensor
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_NAME: "Test",
-            CONF_MIN_HOURS: 2.5,
+            CONF_NORDPOOL_SENSOR: entity_se3.entity_id,
+            CONF_NAME: "Floor Heating SE3",
+            CONF_MIN_HOURS: 4.0,
             CONF_ROLLING_WINDOW_HOURS: 24.0,
         },
     )
 
-    assert result["type"] is FlowResultType.FORM
-    assert "base" in result["errors"]
-    assert result["errors"]["base"] == "nordpool_not_found"
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_NORDPOOL_SENSOR] == entity_se3.entity_id
+    assert result["data"][CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE

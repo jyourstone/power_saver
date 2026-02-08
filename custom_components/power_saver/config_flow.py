@@ -49,7 +49,7 @@ from .const import (
     SELECTION_MODE_CHEAPEST,
     SELECTION_MODE_MOST_EXPENSIVE,
 )
-from .nordpool_adapter import auto_detect_nordpool
+from .nordpool_adapter import detect_nordpool_type, find_all_nordpool_sensors
 
 
 def _optional_number(key: str, defaults: dict[str, Any]) -> vol.Optional:
@@ -159,11 +159,17 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
+        # Detect all available Nordpool sensors
+        all_sensors = find_all_nordpool_sensors(self.hass)
+
         if user_input is not None:
-            # Auto-detect Nordpool sensor
-            nordpool_entity, nordpool_type = auto_detect_nordpool(self.hass)
-            if nordpool_entity is None:
+            nordpool_entity = user_input.get(CONF_NORDPOOL_SENSOR)
+            if not nordpool_entity:
                 errors["base"] = "nordpool_not_found"
+            else:
+                nordpool_type = detect_nordpool_type(self.hass, nordpool_entity)
+                if nordpool_type == "unknown":
+                    errors["base"] = "nordpool_not_found"
 
             if not errors:
                 # Set unique ID to prevent duplicates
@@ -195,9 +201,30 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     options=options,
                 )
 
-        # Build the schema (name + options fields, no sensor picker)
+        if not all_sensors:
+            errors["base"] = "nordpool_not_found"
+
+        # Build sensor selector options
+        sensor_options = [
+            SelectOptionDict(value=entity_id, label=entity_id)
+            for entity_id, _ in all_sensors
+        ]
+
+        # Pre-select if only one sensor exists
+        sensor_default: str | vol.Undefined = vol.UNDEFINED
+        if len(all_sensors) == 1:
+            sensor_default = all_sensors[0][0]
+
         schema = vol.Schema(
             {
+                vol.Required(
+                    CONF_NORDPOOL_SENSOR, default=sensor_default
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=sensor_options,
+                        mode="dropdown",
+                    )
+                ),
                 vol.Required(CONF_NAME): TextSelector(),
             }
         ).extend(_options_schema().schema)

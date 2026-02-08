@@ -6,7 +6,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from custom_components.power_saver.nordpool_adapter import _convert_native_response
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.power_saver.const import NORDPOOL_TYPE_HACS, NORDPOOL_TYPE_NATIVE
+from custom_components.power_saver.nordpool_adapter import (
+    _convert_native_response,
+    find_all_nordpool_sensors,
+)
 
 
 class TestConvertNativeResponse:
@@ -189,3 +197,131 @@ class TestConvertNativeResponse:
         assert result[0]["value"] == pytest.approx(0.1)
         # Last hour: 330 MWh = 0.33 kWh
         assert result[23]["value"] == pytest.approx(0.33)
+
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    """Enable loading of custom integrations."""
+    yield
+
+
+class TestFindAllNordpoolSensors:
+    """Tests for finding all available Nordpool sensors."""
+
+    async def test_no_sensors(self, hass: HomeAssistant):
+        """Returns empty list when no Nordpool integration exists."""
+        result = find_all_nordpool_sensors(hass)
+        assert result == []
+
+    async def test_single_hacs_sensor(self, hass: HomeAssistant):
+        """Finds a single HACS Nordpool sensor."""
+        entry = MockConfigEntry(
+            domain="nordpool", entry_id="hacs_entry"
+        )
+        entry.add_to_hass(hass)
+
+        registry = er.async_get(hass)
+        registry.async_get_or_create(
+            domain="sensor",
+            platform="nordpool",
+            unique_id="kwh_se4_sek",
+            suggested_object_id="nordpool_kwh_se4_sek",
+            config_entry=entry,
+        )
+        hass.states.async_set(
+            "sensor.nordpool_kwh_se4_sek",
+            "0.50",
+            {"raw_today": [{"start": "2026-02-06T00:00:00+01:00", "value": 0.5}]},
+        )
+
+        result = find_all_nordpool_sensors(hass)
+
+        assert len(result) == 1
+        assert result[0] == ("sensor.nordpool_kwh_se4_sek", NORDPOOL_TYPE_HACS)
+
+    async def test_single_native_sensor(self, hass: HomeAssistant):
+        """Finds a single native Nordpool sensor."""
+        entry = MockConfigEntry(
+            domain="nordpool", entry_id="native_entry"
+        )
+        entry.add_to_hass(hass)
+
+        registry = er.async_get(hass)
+        entity_entry = registry.async_get_or_create(
+            domain="sensor",
+            platform="nordpool",
+            unique_id="se4_current_price",
+            suggested_object_id="nordpool_se4_sek",
+            config_entry=entry,
+        )
+        hass.states.async_set(
+            entity_entry.entity_id, "0.45", {"unit_of_measurement": "SEK/kWh"}
+        )
+
+        result = find_all_nordpool_sensors(hass)
+
+        assert len(result) == 1
+        assert result[0] == (entity_entry.entity_id, NORDPOOL_TYPE_NATIVE)
+
+    async def test_multiple_native_sensors(self, hass: HomeAssistant):
+        """Finds multiple native Nordpool sensors from different config entries."""
+        registry = er.async_get(hass)
+
+        entry_se4 = MockConfigEntry(
+            domain="nordpool", entry_id="entry_se4"
+        )
+        entry_se4.add_to_hass(hass)
+        entity_se4 = registry.async_get_or_create(
+            domain="sensor",
+            platform="nordpool",
+            unique_id="se4_price",
+            suggested_object_id="nordpool_se4",
+            config_entry=entry_se4,
+        )
+        hass.states.async_set(entity_se4.entity_id, "0.45")
+
+        entry_se3 = MockConfigEntry(
+            domain="nordpool", entry_id="entry_se3"
+        )
+        entry_se3.add_to_hass(hass)
+        entity_se3 = registry.async_get_or_create(
+            domain="sensor",
+            platform="nordpool",
+            unique_id="se3_price",
+            suggested_object_id="nordpool_se3",
+            config_entry=entry_se3,
+        )
+        hass.states.async_set(entity_se3.entity_id, "0.50")
+
+        result = find_all_nordpool_sensors(hass)
+
+        assert len(result) == 2
+        entity_ids = [r[0] for r in result]
+        assert entity_se4.entity_id in entity_ids
+        assert entity_se3.entity_id in entity_ids
+
+    async def test_hacs_sensor_not_duplicated_as_native(self, hass: HomeAssistant):
+        """HACS sensor should not appear twice (once as HACS, once as native)."""
+        entry = MockConfigEntry(
+            domain="nordpool", entry_id="hacs_entry"
+        )
+        entry.add_to_hass(hass)
+
+        registry = er.async_get(hass)
+        registry.async_get_or_create(
+            domain="sensor",
+            platform="nordpool",
+            unique_id="kwh_se4_sek",
+            suggested_object_id="nordpool_kwh_se4_sek",
+            config_entry=entry,
+        )
+        hass.states.async_set(
+            "sensor.nordpool_kwh_se4_sek",
+            "0.50",
+            {"raw_today": [{"start": "2026-02-06T00:00:00+01:00", "value": 0.5}]},
+        )
+
+        result = find_all_nordpool_sensors(hass)
+
+        assert len(result) == 1
+        assert result[0][1] == NORDPOOL_TYPE_HACS

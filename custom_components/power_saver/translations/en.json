@@ -3,8 +3,9 @@
     "step": {
       "user": {
         "title": "Set up Power Saver",
-        "description": "Configure a power saver instance for an appliance. The Nordpool sensor is detected automatically (HACS or native). You can add multiple instances for different appliances.",
+        "description": "Configure a power saver instance for an appliance. Select which Nordpool sensor to use for price data. You can add multiple instances for different appliances.",
         "data": {
+          "nordpool_sensor": "Nordpool sensor",
           "name": "Name",
           "selection_mode": "Mode",
           "min_hours": "Minimum active hours",
@@ -16,6 +17,7 @@
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
+          "nordpool_sensor": "The Nordpool sensor to use for electricity prices. If you have multiple Nordpool entries (e.g., different price regions), select the one for this appliance.",
           "name": "A descriptive name for this instance (e.g., 'Water Heater').",
           "selection_mode": "Choose whether to activate the cheapest hours (default) or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
           "min_hours": "Minimum number of hours to keep active within each rolling window.",

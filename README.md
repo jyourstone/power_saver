@@ -62,6 +62,7 @@ Click the button above, or add it manually:
 
 | Field | Description |
 |-------|-------------|
+| **Nordpool sensor** | The Nordpool sensor to use for electricity prices. If you have multiple Nordpool entries (e.g., different price regions), select the correct one. Pre-selected if only one exists. |
 | **Name** | A descriptive name (e.g., "Water Heater", "Floor Heating") |
 | **Mode** | `Cheapest` selects the cheapest hours; `Most expensive` selects the most expensive (inverts the schedule) |
 | **Rolling window hours** | Ensures minimum hours within a rolling window (empty = disabled, uses daily mode) |

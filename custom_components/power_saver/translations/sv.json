@@ -3,8 +3,9 @@
     "step": {
       "user": {
         "title": "Konfigurera Power Saver",
-        "description": "Konfigurera en Power Saver integrationspost för en enhet. Nordpool-sensorn upptäcks automatiskt (HACS eller inbyggd). Du kan lägga till flera poster för olika enheter.",
+        "description": "Konfigurera en Power Saver integrationspost för en enhet. Välj vilken Nordpool-sensor som ska användas för prisdata. Du kan lägga till flera poster för olika enheter.",
         "data": {
+          "nordpool_sensor": "Nordpool-sensor",
           "name": "Namn",
           "selection_mode": "Läge",
           "min_hours": "Minsta antal aktiva timmar",
@@ -16,6 +17,7 @@
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
+          "nordpool_sensor": "Nordpool-sensorn som ska användas för elpriser. Om du har flera Nordpool-poster (t.ex. olika prisområden), välj den som gäller för denna enhet.",
           "name": "Ett beskrivande namn för denna integrationspost (t.ex. 'Varmvattenberedare').",
           "selection_mode": "Välj om de billigaste timmarna (standard) eller de dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller enligt beskrivningarna nedan.",
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",

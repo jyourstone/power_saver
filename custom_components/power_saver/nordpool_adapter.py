@@ -33,6 +33,48 @@ def detect_nordpool_type(hass: HomeAssistant, entity_id: str) -> str:
     return "unknown"
 
 
+def find_all_nordpool_sensors(
+    hass: HomeAssistant,
+) -> list[tuple[str, str]]:
+    """Find all available Nordpool sensors (HACS and native).
+
+    Returns:
+        List of (entity_id, nordpool_type) tuples for every Nordpool sensor found.
+    """
+    registry = er.async_get(hass)
+    found: list[tuple[str, str]] = []
+    seen_entity_ids: set[str] = set()
+
+    # Check for HACS nordpool: nordpool platform sensor with raw_today attribute
+    for entity_entry in registry.entities.values():
+        if entity_entry.domain != "sensor" or entity_entry.platform != "nordpool":
+            continue
+        state = hass.states.get(entity_entry.entity_id)
+        if state is not None and state.attributes.get("raw_today") is not None:
+            _LOGGER.debug("Found HACS Nordpool sensor: %s", entity_entry.entity_id)
+            found.append((entity_entry.entity_id, NORDPOOL_TYPE_HACS))
+            seen_entity_ids.add(entity_entry.entity_id)
+
+    # Check for native nordpool: all config entries with domain "nordpool"
+    for config_entry in hass.config_entries.async_entries("nordpool"):
+        entity_entries = er.async_entries_for_config_entry(
+            registry, config_entry.entry_id
+        )
+        for entity_entry in entity_entries:
+            if (
+                entity_entry.domain == "sensor"
+                and entity_entry.entity_id not in seen_entity_ids
+            ):
+                _LOGGER.debug(
+                    "Found native Nordpool sensor: %s",
+                    entity_entry.entity_id,
+                )
+                found.append((entity_entry.entity_id, NORDPOOL_TYPE_NATIVE))
+                seen_entity_ids.add(entity_entry.entity_id)
+
+    return found
+
+
 def auto_detect_nordpool(
     hass: HomeAssistant,
 ) -> tuple[str, str] | tuple[None, None]:
@@ -44,33 +86,9 @@ def auto_detect_nordpool(
     Returns:
         Tuple of (entity_id, nordpool_type) or (None, None) if not found.
     """
-    registry = er.async_get(hass)
-
-    # Check for HACS nordpool: nordpool platform sensor with raw_today attribute
-    for entity_entry in registry.entities.values():
-        if entity_entry.domain != "sensor" or entity_entry.platform != "nordpool":
-            continue
-        state = hass.states.get(entity_entry.entity_id)
-        if state is not None and state.attributes.get("raw_today") is not None:
-            _LOGGER.debug("Auto-detected HACS Nordpool sensor: %s", entity_entry.entity_id)
-            return entity_entry.entity_id, NORDPOOL_TYPE_HACS
-
-    # Check for native nordpool: config entry with domain "nordpool"
-    entries = hass.config_entries.async_entries("nordpool")
-    if entries:
-        config_entry = entries[0]
-        entity_entries = er.async_entries_for_config_entry(
-            registry, config_entry.entry_id
-        )
-        # Pick the first sensor entity for state change listening
-        for entity_entry in entity_entries:
-            if entity_entry.domain == "sensor":
-                _LOGGER.debug(
-                    "Auto-detected native Nordpool sensor: %s",
-                    entity_entry.entity_id,
-                )
-                return entity_entry.entity_id, NORDPOOL_TYPE_NATIVE
-
+    sensors = find_all_nordpool_sensors(hass)
+    if sensors:
+        return sensors[0]
     return None, None
 
 
