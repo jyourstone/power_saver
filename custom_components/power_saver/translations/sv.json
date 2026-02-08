@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Konfigurera Power Saver",
-        "description": "Konfigurera en Power Saver integrationspost för en enhet. Välj vilken Nordpool-sensor som ska användas för prisdata. Du kan lägga till flera poster för olika enheter.",
+        "description": "Konfigurera en Power Saver integrationspost för en enhet. Välj vilken Nord Pool-sensor som ska användas för prisdata. Du kan lägga till flera poster för olika enheter.",
         "data": {
-          "nordpool_sensor": "Nordpool-sensor",
+          "nordpool_sensor": "Nord Pool-sensor",
           "name": "Namn",
           "selection_mode": "Läge",
           "min_hours": "Minsta antal aktiva timmar",
@@ -17,7 +17,7 @@
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
-          "nordpool_sensor": "Nordpool-sensorn som ska användas för elpriser. Om du har flera Nordpool-poster (t.ex. olika prisområden), välj den som gäller för denna enhet.",
+          "nordpool_sensor": "Nord Pool-sensorn som ska användas för elpriser. Om du har flera Nord Pool-poster (t.ex. olika prisområden), välj den som gäller för denna enhet.",
           "name": "Ett beskrivande namn för denna integrationspost (t.ex. 'Varmvattenberedare').",
           "selection_mode": "Välj om de billigaste timmarna (standard) eller de dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller enligt beskrivningarna nedan.",
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",
@@ -31,7 +31,7 @@
       }
     },
     "error": {
-      "nordpool_not_found": "Ingen Nordpool-integration hittades. Konfigurera Nordpool-integrationen (HACS eller inbyggd) innan du konfigurerar Power Saver.",
+      "nordpool_not_found": "Ingen Nord Pool-integration hittades. Konfigurera Nord Pool-integrationen (HACS eller inbyggd) innan du konfigurerar Power Saver.",
       "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad."
     },
     "abort": {
@@ -44,6 +44,7 @@
         "title": "Power Saver-inställningar",
         "description": "Justera schemaläggningsparametrar. Ändringar träder i kraft omedelbart.",
         "data": {
+          "nordpool_sensor": "Nord Pool-sensor",
           "selection_mode": "Läge",
           "min_hours": "Minsta antal aktiva timmar",
           "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
@@ -54,6 +55,7 @@
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
+          "nordpool_sensor": "Nord Pool-sensorn som ska användas för elpriser.",
           "selection_mode": "Välj om de billigaste eller dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller enligt beskrivningarna nedan.",
           "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",
           "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre = jämnare fördelning. 24 = hela dygnet.",

@@ -1,6 +1,6 @@
 # CLAUDE.md — Power Saver Integration
 
-Home Assistant custom integration that schedules appliances during cheapest (or most expensive) electricity hours using Nordpool prices.
+Home Assistant custom integration that schedules appliances during cheapest (or most expensive) electricity hours using Nord Pool prices.
 
 ## Post-Change Checklist
 
@@ -40,7 +40,7 @@ custom_components/power_saver/
 ├── config_flow.py        # UI configuration + options flow
 ├── coordinator.py        # DataUpdateCoordinator, fetches prices, runs scheduler
 ├── scheduler.py          # Pure scheduling algorithm (no HA deps, independently testable)
-├── nordpool_adapter.py   # Abstracts HACS vs native Nordpool
+├── nordpool_adapter.py   # Abstracts HACS vs native Nord Pool
 ├── sensor.py             # Status + diagnostic sensors
 ├── binary_sensor.py      # Emergency mode binary sensor
 ├── strings.json          # English source strings (blueprint only)
@@ -52,13 +52,13 @@ custom_components/power_saver/
 ### Key Components
 
 - **scheduler.py** — Pure functions, no HA imports. Core algorithm: sort by price, activate cheapest N slots, apply thresholds/constraints. Testable in isolation.
-- **coordinator.py** — `PowerSaverCoordinator` extends `DataUpdateCoordinator`. Fetches Nordpool data every 15 min, runs scheduler, controls target entities on state changes.
-- **nordpool_adapter.py** — Auto-detects HACS (`raw_today` attribute) vs native HA Nordpool. Normalizes both to `[{start, end, value}]` format.
-- **config_flow.py** — Single-step user flow + options flow. Auto-detects Nordpool sensor. Unique ID: `{nordpool_entity}_{slugified_name}`.
+- **coordinator.py** — `PowerSaverCoordinator` extends `DataUpdateCoordinator`. Fetches Nord Pool data every 15 min, runs scheduler, controls target entities on state changes.
+- **nordpool_adapter.py** — Auto-detects HACS (`raw_today` attribute) vs native HA Nord Pool. Normalizes both to `[{start, end, value}]` format.
+- **config_flow.py** — Single-step user flow + options flow. Auto-detects Nord Pool sensor. Unique ID: `{nordpool_entity}_{slugified_name}`.
 
 ### Data Flow
 
-1. Coordinator fetches prices from Nordpool (via adapter)
+1. Coordinator fetches prices from Nord Pool (via adapter)
 2. `scheduler.build_schedule()` computes slot activation
 3. `scheduler.find_current_slot()` determines current state
 4. Coordinator controls target entities (switch/input_boolean/light)

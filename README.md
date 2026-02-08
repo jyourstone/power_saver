@@ -33,7 +33,7 @@
 ## Requirements
 
 - Home Assistant 2024.4.0 or newer
-- Nordpool integration, either the [native addon](https://www.home-assistant.io/integrations/nordpool/) or the [HACS custom addon](https://github.com/custom-components/nordpool), installed and configured
+- Nord Pool integration, either the [native addon](https://www.home-assistant.io/integrations/nordpool/) or the [HACS custom addon](https://github.com/custom-components/nordpool), installed and configured
 
 ## Installation
 
@@ -62,7 +62,7 @@ Click the button above, or add it manually:
 
 | Field | Description |
 |-------|-------------|
-| **Nordpool sensor** | The Nordpool sensor to use for electricity prices. If you have multiple Nordpool entries (e.g., different price regions), select the correct one. Pre-selected if only one exists. |
+| **Nord Pool sensor** | The Nord Pool sensor to use for electricity prices |
 | **Name** | A descriptive name (e.g., "Water Heater", "Floor Heating") |
 | **Mode** | `Cheapest` selects the cheapest hours; `Most expensive` selects the most expensive (inverts the schedule) |
 | **Rolling window hours** | Ensures minimum hours within a rolling window (empty = disabled, uses daily mode) |
@@ -75,7 +75,7 @@ Click the button above, or add it manually:
 
 4. Click **Submit**
 
-To add another appliance, simply add the integration again with different settings.
+To add another appliance, simply add a new service with different settings.
 
 ### Changing settings
 
@@ -113,7 +113,7 @@ Each instance creates the following sensors:
 
 ## How it works
 
-1. **Price data** — Reads hourly prices from your Nordpool sensor (today + tomorrow when available)
+1. **Price data** — Reads hourly prices from your Nord Pool sensor (today + tomorrow when available)
 2. **Slot selection** — Selects the cheapest (or most expensive) 15-minute slots to meet your minimum active hours
 3. **Thresholds** — Applies always-cheap (force on) and always-expensive (force off) price thresholds
 4. **Similarity grouping** — Groups slots with nearly identical prices for more consistent scheduling

@@ -214,7 +214,7 @@ class TestFindAllNordpoolSensors:
         assert result == []
 
     async def test_single_hacs_sensor(self, hass: HomeAssistant):
-        """Finds a single HACS Nordpool sensor."""
+        """Finds a single HACS Nordpool sensor with friendly name label."""
         entry = MockConfigEntry(
             domain="nordpool", entry_id="hacs_entry"
         )
@@ -231,16 +231,22 @@ class TestFindAllNordpoolSensors:
         hass.states.async_set(
             "sensor.nordpool_kwh_se4_sek",
             "0.50",
-            {"raw_today": [{"start": "2026-02-06T00:00:00+01:00", "value": 0.5}]},
+            {
+                "friendly_name": "Nordpool kWh SE4 SEK",
+                "raw_today": [{"start": "2026-02-06T00:00:00+01:00", "value": 0.5}],
+            },
         )
 
         result = find_all_nordpool_sensors(hass)
 
         assert len(result) == 1
-        assert result[0] == ("sensor.nordpool_kwh_se4_sek", NORDPOOL_TYPE_HACS)
+        entity_id, nordpool_type, label = result[0]
+        assert entity_id == "sensor.nordpool_kwh_se4_sek"
+        assert nordpool_type == NORDPOOL_TYPE_HACS
+        assert label == "Nordpool kWh SE4 SEK"
 
     async def test_single_native_sensor(self, hass: HomeAssistant):
-        """Finds a single native Nordpool sensor."""
+        """Finds a single native Nordpool current_price sensor."""
         entry = MockConfigEntry(
             domain="nordpool", entry_id="native_entry"
         )
@@ -250,21 +256,61 @@ class TestFindAllNordpoolSensors:
         entity_entry = registry.async_get_or_create(
             domain="sensor",
             platform="nordpool",
-            unique_id="se4_current_price",
+            unique_id="se4-current_price",
             suggested_object_id="nordpool_se4_sek",
             config_entry=entry,
         )
         hass.states.async_set(
-            entity_entry.entity_id, "0.45", {"unit_of_measurement": "SEK/kWh"}
+            entity_entry.entity_id, "0.45",
+            {"friendly_name": "Nord Pool SE4", "unit_of_measurement": "SEK/kWh"},
         )
 
         result = find_all_nordpool_sensors(hass)
 
         assert len(result) == 1
-        assert result[0] == (entity_entry.entity_id, NORDPOOL_TYPE_NATIVE)
+        entity_id, nordpool_type, label = result[0]
+        assert entity_id == entity_entry.entity_id
+        assert nordpool_type == NORDPOOL_TYPE_NATIVE
+        assert label == "Nord Pool SE4"
 
-    async def test_multiple_native_sensors(self, hass: HomeAssistant):
-        """Finds multiple native Nordpool sensors from different config entries."""
+    async def test_native_filters_non_current_price(self, hass: HomeAssistant):
+        """Only current_price sensors are returned for native Nordpool."""
+        entry = MockConfigEntry(
+            domain="nordpool", entry_id="native_entry"
+        )
+        entry.add_to_hass(hass)
+
+        registry = er.async_get(hass)
+
+        # current_price sensor (should be included)
+        current = registry.async_get_or_create(
+            domain="sensor",
+            platform="nordpool",
+            unique_id="se4-current_price",
+            suggested_object_id="nordpool_se4_current",
+            config_entry=entry,
+        )
+        hass.states.async_set(current.entity_id, "0.45")
+
+        # Other sensors that should be filtered out
+        for key in ["last_price", "next_price", "lowest_price", "highest_price",
+                     "daily_average", "updated_at", "currency"]:
+            other = registry.async_get_or_create(
+                domain="sensor",
+                platform="nordpool",
+                unique_id=f"se4-{key}",
+                suggested_object_id=f"nordpool_se4_{key}",
+                config_entry=entry,
+            )
+            hass.states.async_set(other.entity_id, "0.00")
+
+        result = find_all_nordpool_sensors(hass)
+
+        assert len(result) == 1
+        assert result[0][0] == current.entity_id
+
+    async def test_multiple_native_current_price_sensors(self, hass: HomeAssistant):
+        """Finds current_price sensors from different config entries."""
         registry = er.async_get(hass)
 
         entry_se4 = MockConfigEntry(
@@ -274,7 +320,7 @@ class TestFindAllNordpoolSensors:
         entity_se4 = registry.async_get_or_create(
             domain="sensor",
             platform="nordpool",
-            unique_id="se4_price",
+            unique_id="se4-current_price",
             suggested_object_id="nordpool_se4",
             config_entry=entry_se4,
         )
@@ -287,7 +333,7 @@ class TestFindAllNordpoolSensors:
         entity_se3 = registry.async_get_or_create(
             domain="sensor",
             platform="nordpool",
-            unique_id="se3_price",
+            unique_id="se3-current_price",
             suggested_object_id="nordpool_se3",
             config_entry=entry_se3,
         )

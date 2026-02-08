@@ -89,11 +89,12 @@ async def setup_native_nordpool(hass: HomeAssistant):
     nordpool_config_entry.add_to_hass(hass)
 
     # Register a sensor entity belonging to that config entry
+    # Native unique_id format: "{area}-{key}"
     registry = er.async_get(hass)
     entity_entry = registry.async_get_or_create(
         domain="sensor",
         platform="nordpool",
-        unique_id="se4_sek_current_price",
+        unique_id="se4-current_price",
         suggested_object_id="nordpool_se4_sek_current_price",
         config_entry=nordpool_config_entry,
     )
@@ -118,7 +119,7 @@ async def setup_two_native_nordpool(hass: HomeAssistant):
     entity_se4 = registry.async_get_or_create(
         domain="sensor",
         platform="nordpool",
-        unique_id="se4_sek_current_price",
+        unique_id="se4-current_price",
         suggested_object_id="nordpool_kwh_se4_sek",
         config_entry=entry_se4,
     )
@@ -136,7 +137,7 @@ async def setup_two_native_nordpool(hass: HomeAssistant):
     entity_se3 = registry.async_get_or_create(
         domain="sensor",
         platform="nordpool",
-        unique_id="se3_sek_current_price",
+        unique_id="se3-current_price",
         suggested_object_id="nordpool_kwh_se3_sek",
         config_entry=entry_se3,
     )
@@ -270,3 +271,50 @@ async def test_multiple_sensors_user_selects(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_NORDPOOL_SENSOR] == entity_se3.entity_id
     assert result["data"][CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE
+
+
+async def test_options_flow_change_nordpool_sensor(
+    hass: HomeAssistant, setup_two_native_nordpool
+):
+    """Test changing the Nordpool sensor via the options flow."""
+    entity_se4, entity_se3 = setup_two_native_nordpool
+
+    # Create an existing config entry using SE4
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Water Heater",
+        data={
+            CONF_NORDPOOL_SENSOR: entity_se4.entity_id,
+            CONF_NORDPOOL_TYPE: NORDPOOL_TYPE_NATIVE,
+            CONF_NAME: "Water Heater",
+        },
+        options={
+            CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
+            CONF_MIN_HOURS: 4.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+        },
+    )
+    config_entry.add_to_hass(hass)
+
+    # Start options flow
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    # Change sensor from SE4 to SE3
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_NORDPOOL_SENSOR: entity_se3.entity_id,
+            CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
+            CONF_MIN_HOURS: 4.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+    # Verify data was updated with new sensor
+    assert config_entry.data[CONF_NORDPOOL_SENSOR] == entity_se3.entity_id
+    assert config_entry.data[CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE

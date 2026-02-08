@@ -83,26 +83,26 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def _async_setup(self) -> None:
         """Set up the coordinator (called once on first refresh)."""
-        # Register Nordpool state change listener for immediate recalculation
+        # Register Nord Pool state change listener for immediate recalculation
         self._unsub_nordpool = async_track_state_change_event(
             self.hass, [self._nordpool_entity], self._on_nordpool_update
         )
 
     @callback
     def _on_nordpool_update(self, event: Event) -> None:
-        """Handle Nordpool sensor state change."""
-        _LOGGER.debug("Nordpool sensor updated, requesting refresh")
+        """Handle Nord Pool sensor state change."""
+        _LOGGER.debug("Nord Pool sensor updated, requesting refresh")
         self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_update_data(self) -> PowerSaverData:
-        """Fetch data from Nordpool sensor and compute schedule."""
+        """Fetch data from Nord Pool sensor and compute schedule."""
         now = dt_util.now()
 
-        # Read Nordpool state
+        # Read Nord Pool state
         nordpool_state = self.hass.states.get(self._nordpool_entity)
         if nordpool_state is None:
             raise UpdateFailed(
-                f"Nordpool sensor {self._nordpool_entity} not available"
+                f"Nord Pool sensor {self._nordpool_entity} not available"
             )
 
         raw_today, raw_tomorrow = await async_get_prices(
@@ -129,7 +129,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         # Emergency mode: no price data at all
         if not raw_today and not raw_tomorrow:
             _LOGGER.error(
-                "No price data available from Nordpool sensor! Activating emergency mode"
+                "No price data available from Nord Pool sensor! Activating emergency mode"
             )
             emergency_schedule = []
             for i in range(96):  # 24 hours * 4 slots per hour
@@ -154,7 +154,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
         # No today data but have tomorrow — can't schedule
         if not raw_today:
-            _LOGGER.warning("No price data for today from Nordpool sensor")
+            _LOGGER.warning("No price data for today from Nord Pool sensor")
             raise UpdateFailed("No price data available for today")
 
         # Build schedule

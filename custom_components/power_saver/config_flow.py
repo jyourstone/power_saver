@@ -14,8 +14,10 @@ from homeassistant.config_entries import (
 
 try:
     from homeassistant.config_entries import OptionsFlowWithReload
+    _LEGACY_OPTIONS_FLOW = False
 except ImportError:
     from homeassistant.config_entries import OptionsFlowWithConfigEntry as OptionsFlowWithReload
+    _LEGACY_OPTIONS_FLOW = True
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
@@ -151,6 +153,8 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> PowerSaverOptionsFlow:
         """Get the options flow for this handler."""
+        if _LEGACY_OPTIONS_FLOW:
+            return PowerSaverOptionsFlow(config_entry)
         return PowerSaverOptionsFlow()
 
     async def async_step_user(
@@ -159,7 +163,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
-        # Detect all available Nordpool sensors
+        # Detect all available Nord Pool sensors
         all_sensors = find_all_nordpool_sensors(self.hass)
 
         if user_input is not None:
@@ -204,10 +208,10 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         if not all_sensors:
             errors["base"] = "nordpool_not_found"
 
-        # Build sensor selector options
+        # Build sensor selector options with friendly labels
         sensor_options = [
-            SelectOptionDict(value=entity_id, label=entity_id)
-            for entity_id, _ in all_sensors
+            SelectOptionDict(value=entity_id, label=label)
+            for entity_id, _, label in all_sensors
         ]
 
         # Pre-select if only one sensor exists
@@ -244,9 +248,55 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Handle Nord Pool sensor change (stored in data, not options)
+            new_sensor = user_input.pop(CONF_NORDPOOL_SENSOR, None)
+            current_sensor = self.config_entry.data.get(CONF_NORDPOOL_SENSOR)
+
+            if new_sensor and new_sensor != current_sensor:
+                new_type = detect_nordpool_type(self.hass, new_sensor)
+                new_data = dict(self.config_entry.data)
+                new_data[CONF_NORDPOOL_SENSOR] = new_sensor
+                new_data[CONF_NORDPOOL_TYPE] = new_type
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=new_data
+                )
+
             return self.async_create_entry(data=user_input)
+
+        # Build sensor selector for the options form
+        all_sensors = find_all_nordpool_sensors(self.hass)
+        current_sensor = self.config_entry.data.get(CONF_NORDPOOL_SENSOR, "")
+
+        sensor_options = [
+            SelectOptionDict(value=entity_id, label=label)
+            for entity_id, _, label in all_sensors
+        ]
+
+        # Ensure the current sensor is in the list (even if no longer detected)
+        current_in_list = any(s[0] == current_sensor for s in all_sensors)
+        if not current_in_list and current_sensor:
+            sensor_options.append(
+                SelectOptionDict(value=current_sensor, label=current_sensor)
+            )
+
+        sensor_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NORDPOOL_SENSOR, default=current_sensor
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=sensor_options,
+                        mode="dropdown",
+                    )
+                ),
+            }
+        )
+
+        schema = sensor_schema.extend(
+            _options_schema(self.config_entry.options).schema
+        )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_options_schema(self.config_entry.options),
+            data_schema=schema,
         )
