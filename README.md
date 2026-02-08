@@ -65,7 +65,7 @@ Click the button above, or add it manually:
 | **Nord Pool sensor** | The Nord Pool sensor to use for electricity prices |
 | **Name** | A descriptive name (e.g., "Water Heater", "Floor Heating") |
 | **Mode** | `Cheapest` selects the cheapest hours; `Most expensive` selects the most expensive (inverts the schedule) |
-| **Rolling window hours** | Ensures minimum hours within a rolling window (empty = disabled, uses daily mode) |
+| **Rolling window hours** | Ensures minimum hours within a rolling window (default = 24) |
 | **Minimum active hours** | How many hours per day the appliance should run |
 | **Always-cheap price** | Price below which slots are always active (empty = disabled) |
 | **Always-expensive price** | Price at/above which slots are never active (empty = disabled) |
