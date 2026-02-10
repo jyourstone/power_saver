@@ -105,7 +105,7 @@ Each instance creates the following sensors:
 
 ### Always on switch
 
-Each instance includes an **ALways on** switch. When turned ON, it forces all controlled entities ON regardless of the schedule. The status sensor shows `override` during this time. Turn OFF to resume normal scheduling. The switch state persists across Home Assistant restarts.
+Each instance includes an **Always on** switch. When turned ON, it forces all controlled entities ON regardless of the schedule. The status sensor shows `override` during this time. Turn OFF to resume normal scheduling. The switch state persists across Home Assistant restarts.
 
 ### Diagnostic sensors
 
