@@ -98,6 +98,11 @@
       "emergency_mode": {
         "name": "Nödläge"
       }
+    },
+    "switch": {
+      "override": {
+        "name": "Alltid på"
+      }
     }
   }
 }

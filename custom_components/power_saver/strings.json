@@ -98,6 +98,11 @@
       "emergency_mode": {
         "name": "Emergency Mode"
       }
+    },
+    "switch": {
+      "override": {
+        "name": "Always on"
+      }
     }
   }
 }

@@ -27,6 +27,7 @@
 - **Rolling window constraint** — Ensures minimum activity within any configurable time window (e.g., water heater must run at least 4 hours in any 24-hour window)
 - **Minimum consecutive hours** — Prevents short on/off cycles by requiring a minimum run duration
 - **Multiple instances** — Add one per appliance (water heater, floor heating, pool pump, etc.)
+- **Always on** — Force all controlled entities ON via a switch, bypassing the schedule
 - **Emergency mode** — Keeps appliances running if price data is unavailable
 - **No helpers needed** — All configuration is done through the integration's UI
 
@@ -91,6 +92,7 @@ Each instance creates the following sensors:
 |-------|-------------|
 | `active` | The appliance should be running in the current time slot |
 | `standby` | The appliance should be off in the current time slot |
+| `override` | Always on is active — all controlled entities are forced ON |
 
 ### Attributes
 
@@ -100,6 +102,10 @@ Each instance creates the following sensors:
 | `min_price` | Lowest price today |
 | `max_price` | Highest price today |
 | `active_slots` | Total number of active slots in the schedule |
+
+### Always on switch
+
+Each instance includes an **Always on** switch. When turned ON, it forces all controlled entities ON regardless of the schedule. The status sensor shows `override` during this time. Turn OFF to resume normal scheduling. The switch state persists across Home Assistant restarts.
 
 ### Diagnostic sensors
 

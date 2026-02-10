@@ -40,3 +40,4 @@ UPDATE_INTERVAL_MINUTES = 15
 # Sensor states
 STATE_ACTIVE = "active"
 STATE_STANDBY = "standby"
+STATE_OVERRIDE = "override"
