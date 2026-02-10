@@ -127,6 +127,105 @@ Each instance includes an **Always on** switch. When turned ON, it forces all co
 6. **Consecutive hours** (optional) — Merges short active segments to prevent rapid on/off cycling
 7. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
 
+## Dashboard example
+
+You can visualize the electricity price alongside the Power Saver schedule using the [ApexCharts Card](https://github.com/RomRider/apexcharts-card) for Home Assistant. This gives you a clear overview of when the appliance is active and how it correlates with the price.
+
+<p align="center">
+  <img src="images/apexcharts_example.png" alt="ApexCharts price and schedule graph" width="480">
+</p>
+
+Replace `sensor.heater_power_saver_schedule` with your own schedule sensor entity ID.
+
+<details>
+<summary>ApexCharts card YAML</summary>
+
+```yaml
+type: custom:apexcharts-card
+header:
+  show: true
+  title: Price 48t + Powersaver
+now:
+  show: true
+  label: Now
+graph_span: 2d
+span:
+  start: day
+apex_config:
+  stroke:
+    width: 2
+  dataLabels:
+    enabled: true
+  fill:
+    type: gradient
+    gradient:
+      shadeIntensity: 1
+      inverseColors: false
+      opacityFrom: 0.45
+      opacityTo: 0.05
+      stops:
+        - 10
+        - 50
+        - 75
+        - 1000
+  legend:
+    show: false
+  yaxis:
+    - id: price
+      show: true
+      decimalsInFloat: 1
+      floating: false
+      forceNiceScale: true
+      extend_to: end
+    - id: usage
+      show: true
+      opposite: true
+      decimalsInFloat: 0
+      floating: false
+      forceNiceScale: true
+      extend_to: end
+    - id: powersaver
+      show: false
+      decimalsInFloat: 0
+      floating: false
+      extend_to: now
+series:
+  - entity: sensor.heater_power_saver_schedule
+    yaxis_id: price
+    extend_to: now
+    name: Price
+    type: area
+    curve: stepline
+    color: tomato
+    show:
+      legend_value: false
+    data_generator: |
+      return entity.attributes.schedule.map((entry) => {
+        return [new Date(entry.time), entry.price];
+      });
+  - entity: sensor.heater_power_saver_schedule
+    data_generator: |
+      return entity.attributes.schedule.map((entry) => {
+        return [new Date(entry.time), entry.status === "active" ? 1 : 0];
+      });
+    yaxis_id: powersaver
+    name: " "
+    type: area
+    color: rgb(0, 255, 0)
+    opacity: 0.2
+    stroke_width: 0
+    curve: stepline
+    group_by:
+      func: min
+    show:
+      legend_value: false
+      in_header: false
+      name_in_header: false
+      datalabels: false
+```
+
+</details>
+
 ## Disclaimer
 
 The vast majority of this project was developed by an AI assistant. While I do have some basic experience with programming from a long time ago, I'm essentially the architect, guiding the AI, fixing its occasional goofs, and trying to keep it from becoming self-aware.
