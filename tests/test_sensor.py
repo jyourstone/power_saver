@@ -77,6 +77,30 @@ def test_status_sensor_icon_standby():
     assert sensor.icon == "mdi:power-plug-off"
 
 
+def test_status_sensor_native_value_override():
+    """Test sensor returns 'override' when coordinator says override."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(current_state="override")
+    sensor = PowerSaverSensor(coordinator, _make_entry())
+    assert sensor.native_value == "override"
+
+
+def test_status_sensor_icon_override():
+    """Test icon when in override state."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(current_state="override")
+    sensor = PowerSaverSensor(coordinator, _make_entry())
+    assert sensor.icon == "mdi:hand-back-right"
+
+
+def test_status_sensor_icon_no_data():
+    """Test icon returns plug-off when no data."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = PowerSaverSensor(coordinator, _make_entry())
+    assert sensor.icon == "mdi:power-plug-off"
+
+
 def test_status_sensor_attributes():
     """Test that main sensor exposes only user-facing attributes."""
     coordinator = MagicMock()

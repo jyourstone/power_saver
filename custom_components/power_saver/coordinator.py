@@ -32,6 +32,7 @@ from .const import (
     DOMAIN,
     NORDPOOL_TYPE_HACS,
     STATE_ACTIVE,
+    STATE_OVERRIDE,
     STATE_STANDBY,
     UPDATE_INTERVAL_MINUTES,
 )
@@ -80,6 +81,21 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._history_loaded = False
         self._unsub_nordpool: callback | None = None
         self._previous_state: str | None = None
+        self._override_active: bool = False
+
+    @property
+    def override_active(self) -> bool:
+        """Return whether Always on is active."""
+        return self._override_active
+
+    async def async_set_override(self, active: bool) -> None:
+        """Set or clear the Always on state."""
+        self._override_active = active
+        if active:
+            await self._control_entities(STATE_ACTIVE)
+        else:
+            self._previous_state = None  # Force re-evaluation on next update
+        await self.async_request_refresh()
 
     async def _async_setup(self) -> None:
         """Set up the coordinator (called once on first refresh)."""
@@ -200,10 +216,15 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         last_active_time = self._activity_history[-1] if self._activity_history else None
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
 
-        # Control entities on state change
-        if current_state != self._previous_state:
-            await self._control_entities(current_state)
-            self._previous_state = current_state
+        # Override mode: bypass schedule, force entities on
+        if self._override_active:
+            current_state = STATE_OVERRIDE
+            self._previous_state = STATE_OVERRIDE
+        else:
+            # Control entities on state change
+            if current_state != self._previous_state:
+                await self._control_entities(current_state)
+                self._previous_state = current_state
 
         return PowerSaverData(
             schedule=schedule,
@@ -224,7 +245,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         if not entities:
             return
 
-        service = SERVICE_TURN_ON if new_state == STATE_ACTIVE else SERVICE_TURN_OFF
+        service = SERVICE_TURN_ON if new_state in (STATE_ACTIVE, STATE_OVERRIDE) else SERVICE_TURN_OFF
         _LOGGER.info(
             "State changed to %s, calling homeassistant.%s for %s",
             new_state, service, entities,
