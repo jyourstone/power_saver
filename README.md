@@ -131,8 +131,8 @@ Each instance includes an **Always on** switch. When turned ON, it forces all co
 
 You can visualize the electricity price alongside the Power Saver schedule using the [ApexCharts Card](https://github.com/RomRider/apexcharts-card) for Home Assistant. This gives you a clear overview of when the appliance is active and how it correlates with the price.
 
-<p align="center">
-  <img src="images/apexcharts_example.png" alt="ApexCharts price and schedule graph" width="480">
+<p>
+  <img src="images/apexcharts_example.png" alt="ApexCharts price and schedule graph">
 </p>
 
 Replace `sensor.heater_power_saver_schedule` with your own schedule sensor entity ID.
