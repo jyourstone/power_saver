@@ -165,6 +165,15 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER.error(
                 "No price data available from Nord Pool sensor! Activating emergency mode"
             )
+
+            # Force on/off overrides take precedence over emergency mode
+            if self._force_on:
+                current_state = STATE_FORCED_ON
+            elif self._force_off:
+                current_state = STATE_FORCED_OFF
+            else:
+                current_state = STATE_ACTIVE
+
             emergency_schedule = []
             for i in range(96):  # 24 hours * 4 slots per hour
                 slot_time = now + timedelta(minutes=i * 15)
@@ -179,7 +188,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
             return PowerSaverData(
                 schedule=emergency_schedule,
-                current_state=STATE_ACTIVE,
+                current_state=current_state,
                 active_slots=96,
                 last_active_time=now.isoformat(),
                 active_hours_in_window=24.0,
