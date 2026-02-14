@@ -13,7 +13,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_NAME, DOMAIN, STATE_ACTIVE, STATE_OVERRIDE, STATE_STANDBY
+from .const import CONF_NAME, DOMAIN, STATE_ACTIVE, STATE_FORCED_OFF, STATE_FORCED_ON, STATE_STANDBY
 from .coordinator import PowerSaverCoordinator, PowerSaverData
 
 
@@ -55,7 +55,7 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> str:
-        """Return current state: 'active', 'standby', or 'override'."""
+        """Return current state: 'active', 'standby', 'forced_on', or 'forced_off'."""
         if self.coordinator.data is None:
             return STATE_STANDBY
         return self.coordinator.data.current_state
@@ -68,8 +68,10 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
         state = self.coordinator.data.current_state
         if state == STATE_ACTIVE:
             return "mdi:power-plug"
-        if state == STATE_OVERRIDE:
+        if state == STATE_FORCED_ON:
             return "mdi:hand-back-right"
+        if state == STATE_FORCED_OFF:
+            return "mdi:hand-back-right-off"
         return "mdi:power-plug-off"
 
     @property
