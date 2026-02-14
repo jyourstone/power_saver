@@ -96,7 +96,7 @@
         "name": "Last Active"
       },
       "active_hours_in_window": {
-        "name": "Active Hours in Window"
+        "name": "Active Time in Window"
       },
       "next_change": {
         "name": "Next Change"
