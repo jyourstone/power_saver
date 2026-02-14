@@ -19,6 +19,8 @@ from .const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
     CONF_CONTROLLED_ENTITIES,
+    CONF_EXCLUDE_FROM,
+    CONF_EXCLUDE_UNTIL,
     CONF_MIN_CONSECUTIVE_HOURS,
     CONF_MIN_HOURS,
     CONF_NORDPOOL_SENSOR,
@@ -154,6 +156,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         price_similarity_pct = options.get(CONF_PRICE_SIMILARITY_PCT)
         min_consecutive_hours = options.get(CONF_MIN_CONSECUTIVE_HOURS)
         selection_mode = options.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE)
+        exclude_from = options.get(CONF_EXCLUDE_FROM)
+        exclude_until = options.get(CONF_EXCLUDE_UNTIL)
 
         # Load activity history from persistent storage on first run
         if not self._history_loaded:
@@ -213,6 +217,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             price_similarity_pct=price_similarity_pct,
             min_consecutive_hours=min_consecutive_hours,
             selection_mode=selection_mode,
+            exclude_from=exclude_from,
+            exclude_until=exclude_until,
         )
 
         # Find current slot

@@ -16,6 +16,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.power_saver.const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
+    CONF_EXCLUDE_FROM,
+    CONF_EXCLUDE_UNTIL,
     CONF_MIN_CONSECUTIVE_HOURS,
     CONF_MIN_HOURS,
     CONF_NAME,
@@ -371,3 +373,49 @@ async def test_options_flow_rejects_invalid_sensor(
     # Verify original data was NOT changed
     assert config_entry.data[CONF_NORDPOOL_SENSOR] == entity_se4.entity_id
     assert config_entry.data[CONF_NORDPOOL_TYPE] == NORDPOOL_TYPE_NATIVE
+
+
+async def test_config_flow_with_excluded_hours(hass: HomeAssistant, setup_hacs_nordpool):
+    """Test config flow stores excluded hours in options."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NORDPOOL_SENSOR: NORDPOOL_ENTITY,
+            CONF_NAME: "Water Heater",
+            CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
+            CONF_MIN_HOURS: 4.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+            CONF_EXCLUDE_FROM: "00:00:00",
+            CONF_EXCLUDE_UNTIL: "06:00:00",
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_EXCLUDE_FROM] == "00:00:00"
+    assert result["options"][CONF_EXCLUDE_UNTIL] == "06:00:00"
+
+
+async def test_config_flow_excluded_hours_empty(hass: HomeAssistant, setup_hacs_nordpool):
+    """Test config flow stores None when excluded hours are not set."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NORDPOOL_SENSOR: NORDPOOL_ENTITY,
+            CONF_NAME: "Floor Heating",
+            CONF_SELECTION_MODE: SELECTION_MODE_CHEAPEST,
+            CONF_MIN_HOURS: 4.0,
+            CONF_ROLLING_WINDOW_HOURS: 24.0,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_EXCLUDE_FROM] is None
+    assert result["options"][CONF_EXCLUDE_UNTIL] is None
