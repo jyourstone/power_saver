@@ -55,7 +55,7 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> str:
-        """Return current state: 'active', 'standby', 'forced_on', or 'forced_off'."""
+        """Return current state: 'active', 'standby', 'excluded', 'forced_on', or 'forced_off'."""
         if self.coordinator.data is None:
             return STATE_STANDBY
         return self.coordinator.data.current_state

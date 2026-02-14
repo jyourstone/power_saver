@@ -974,6 +974,8 @@ class TestExcludedHours:
         active_with_excl = [s for s in schedule_with_excl if s["status"] == "active"]
         excluded = [s for s in schedule_with_excl if s["status"] == "excluded"]
 
+        # Baseline without exclusion should have active slots
+        assert len(active_no_excl) >= 10  # 2.5 hours * 4 slots
         # Should still have active slots (from non-excluded hours)
         assert len(active_with_excl) > 0
         assert len(excluded) == 6  # Hours 0-5
