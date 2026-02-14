@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -31,91 +32,67 @@ async def async_setup_entry(
     ])
 
 
-class ForceOnSwitch(
+class _ForceSwitch(
     CoordinatorEntity[PowerSaverCoordinator], SwitchEntity, RestoreEntity
 ):
+    """Base class for force on/off override switches."""
+
+    _attr_has_entity_name = True
+    _force_property: str  # coordinator property name, e.g. "force_on_active"
+    _set_method: str  # coordinator method name, e.g. "async_set_force_on"
+    _log_label: str  # human-readable label for logging, e.g. "Always on"
+
+    def __init__(
+        self, coordinator: PowerSaverCoordinator, entry: ConfigEntry
+    ) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_{self._attr_translation_key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.data[CONF_NAME],
+            manufacturer="Power Saver",
+            model="Price Optimizer",
+            entry_type="service",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if this force switch is active."""
+        return getattr(self.coordinator, self._force_property)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Activate the force state."""
+        await getattr(self.coordinator, self._set_method)(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Deactivate the force state (resume schedule)."""
+        await getattr(self.coordinator, self._set_method)(False)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore previous state on startup."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state == "on":
+            _LOGGER.info("Restoring %s state: ON", self._log_label)
+            await getattr(self.coordinator, self._set_method)(True)
+
+
+class ForceOnSwitch(_ForceSwitch):
     """Switch to force all controlled entities ON, bypassing the schedule."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "force_on"
     _attr_icon = "mdi:hand-back-right"
-
-    def __init__(
-        self, coordinator: PowerSaverCoordinator, entry: ConfigEntry
-    ) -> None:
-        """Initialize the switch."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_force_on"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.data[CONF_NAME],
-            manufacturer="Power Saver",
-            model="Price Optimizer",
-            entry_type="service",
-        )
-
-    @property
-    def is_on(self) -> bool:
-        """Return True if Always on is active."""
-        return self.coordinator.force_on_active
-
-    async def async_turn_on(self, **kwargs) -> None:
-        """Turn on the Always on state (force entities on)."""
-        await self.coordinator.async_set_force_on(True)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        """Turn off the Always on state (resume schedule)."""
-        await self.coordinator.async_set_force_on(False)
-
-    async def async_added_to_hass(self) -> None:
-        """Restore previous state on startup."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == "on":
-            _LOGGER.info("Restoring Always on state: ON")
-            await self.coordinator.async_set_force_on(True)
+    _force_property = "force_on_active"
+    _set_method = "async_set_force_on"
+    _log_label = "Always on"
 
 
-class ForceOffSwitch(
-    CoordinatorEntity[PowerSaverCoordinator], SwitchEntity, RestoreEntity
-):
+class ForceOffSwitch(_ForceSwitch):
     """Switch to force all controlled entities OFF, bypassing the schedule."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "force_off"
     _attr_icon = "mdi:hand-back-right-off"
-
-    def __init__(
-        self, coordinator: PowerSaverCoordinator, entry: ConfigEntry
-    ) -> None:
-        """Initialize the switch."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_force_off"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.data[CONF_NAME],
-            manufacturer="Power Saver",
-            model="Price Optimizer",
-            entry_type="service",
-        )
-
-    @property
-    def is_on(self) -> bool:
-        """Return True if Always off is active."""
-        return self.coordinator.force_off_active
-
-    async def async_turn_on(self, **kwargs) -> None:
-        """Turn on the Always off state (force entities off)."""
-        await self.coordinator.async_set_force_off(True)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        """Turn off the Always off state (resume schedule)."""
-        await self.coordinator.async_set_force_off(False)
-
-    async def async_added_to_hass(self) -> None:
-        """Restore previous state on startup."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == "on":
-            _LOGGER.info("Restoring Always off state: ON")
-            await self.coordinator.async_set_force_off(True)
+    _force_property = "force_off_active"
+    _set_method = "async_set_force_off"
+    _log_label = "Always off"

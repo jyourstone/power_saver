@@ -1,4 +1,4 @@
-"""Tests for the Power Saver override switch entities."""
+"""Tests for the Power Saver force on/off switch entities."""
 
 from __future__ import annotations
 

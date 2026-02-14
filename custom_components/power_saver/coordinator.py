@@ -234,7 +234,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         last_active_time = self._activity_history[-1] if self._activity_history else None
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
 
-        # Override mode: bypass schedule
+        # Force on/off mode: bypass schedule
         if self._force_on:
             current_state = STATE_FORCED_ON
             self._previous_state = STATE_FORCED_ON
