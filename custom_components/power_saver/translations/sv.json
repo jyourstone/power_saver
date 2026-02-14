@@ -14,6 +14,8 @@
           "always_expensive_price": "Alltid dyrt prisgräns (valfritt)",
           "price_similarity_pct": "Prislikhetströskel (valfritt)",
           "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)",
+          "exclude_from": "Exkludera från (valfritt)",
+          "exclude_until": "Exkludera till (valfritt)",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
@@ -26,6 +28,8 @@
           "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. I läget 'Dyraste timmarna': aktivera alltid över detta pris. Lämna tomt för att inaktivera.",
           "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. T.ex. 20 % innebär att tidsluckor upp till 1,2\u00d7 billigaste priset också aktiveras. I läget 'Dyraste timmarna': beräknas från det dyraste priset nedåt. Användbart vid jämna priser. Lämna tomt för att inaktivera.",
           "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler för apparater som varmvattenberedare. Korta block förlängs genom att aktivera angränsande tidsluckor. Lämna tomt för att inaktivera.",
+          "exclude_from": "Start på exkluderad tidsperiod. Tidsluckor under denna period aktiveras aldrig och ignoreras av schemaläggningslogiken. Stöder midnattsövergång (t.ex. 22:00 till 06:00). Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
+          "exclude_until": "Slut på exkluderad tidsperiod. Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
       }
@@ -52,6 +56,8 @@
           "always_expensive_price": "Alltid dyrt prisgräns (valfritt)",
           "price_similarity_pct": "Prislikhetströskel (valfritt)",
           "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)",
+          "exclude_from": "Exkludera från (valfritt)",
+          "exclude_until": "Exkludera till (valfritt)",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
@@ -63,6 +69,8 @@
           "always_expensive_price": "Pris vid eller över vilket tidsluckor aldrig aktiveras. I läget 'Dyraste timmarna': aktivera alltid över detta pris. Lämna tomt för att inaktivera.",
           "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. I läget 'Dyraste timmarna': beräknas från det dyraste priset nedåt. Lämna tomt för att inaktivera.",
           "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att inaktivera.",
+          "exclude_from": "Start på exkluderad tidsperiod. Tidsluckor under denna period aktiveras aldrig och ignoreras av schemaläggningsalgoritmen. Användbart för att undvika timmar med extra nätavgifter (effektavgift). Stöder midnattsövergång (t.ex. 22:00 till 06:00). Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
+          "exclude_until": "Slut på exkluderad tidsperiod. Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
       }

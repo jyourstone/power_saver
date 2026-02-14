@@ -26,6 +26,7 @@
 - **Price similarity threshold** — Groups slots with nearly identical prices for more natural scheduling
 - **Rolling window constraint** — Ensures minimum activity within any configurable time window (e.g., water heater must run at least 4 hours in any 24-hour window)
 - **Minimum consecutive hours** — Prevents short on/off cycles by requiring a minimum run duration
+- **Excluded hours** — Block a time range from ever being activated (e.g., to avoid grid fee peak hours)
 - **Multiple instances** — Add one per appliance (water heater, floor heating, pool pump, etc.)
 - **Always on / Always off** — Force all controlled entities ON or OFF via switches, bypassing the schedule
 - **Emergency mode** — Keeps appliances running if price data is unavailable
@@ -72,6 +73,7 @@ Click the button above, or add it manually:
 | **Always-expensive price** | Price at/above which slots are never active (empty = disabled) |
 | **Price similarity threshold** | Prices within this range are treated as equal (empty = disabled) |
 | **Minimum consecutive active hours** | Minimum number of hours to keep active in a row (empty = disabled) |
+| **Exclude from / Exclude until** | Time range during which slots are never activated and ignored by the scheduler. Useful for avoiding hours with extra grid fees. Supports cross-midnight ranges (e.g., 22:00 to 06:00). Both fields must be set to enable (empty = disabled) |
 | **Controlled entities** | One or more `switch`, `input_boolean`, or `light` entities to turn on/off automatically (empty = disabled) |
 
 4. Click **Submit**
@@ -92,6 +94,7 @@ Each instance creates the following sensors:
 |-------|-------------|
 | `active` | The appliance should be running in the current time slot |
 | `standby` | The appliance should be off in the current time slot |
+| `excluded` | The slot is in the excluded time range and will never activate |
 | `forced_on` | Always on is active — all controlled entities are forced ON |
 | `forced_off` | Always off is active — all controlled entities are forced OFF |
 
@@ -126,12 +129,13 @@ The two switches are mutually exclusive — enabling one automatically disables 
 ## How it works
 
 1. **Price data** — Reads hourly prices from your Nord Pool sensor (today + tomorrow when available)
-2. **Slot selection** — Selects the cheapest (or most expensive) 15-minute slots to meet your minimum active hours
-3. **Thresholds** — Applies always-cheap (force on) and always-expensive (force off) price thresholds
-4. **Similarity grouping** — Groups slots with nearly identical prices for more consistent scheduling
-5. **Rolling window** (optional) — Ensures minimum activity within any rolling time window, activating additional slots as needed
-6. **Consecutive hours** (optional) — Merges short active segments to prevent rapid on/off cycling
-7. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
+2. **Excluded hours** (optional) — Marks slots in the excluded time range as permanently off, removing them from scheduling
+3. **Slot selection** — Selects the cheapest (or most expensive) slots from the remaining hours to meet your minimum active hours
+4. **Thresholds** — Applies always-cheap (force on) and always-expensive (force off) price thresholds
+5. **Similarity grouping** — Groups slots with nearly identical prices for more consistent scheduling
+6. **Rolling window** (optional) — Ensures minimum activity within any rolling time window, activating additional slots as needed
+7. **Consecutive hours** (optional) — Merges short active segments to prevent rapid on/off cycling
+8. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
 
 ## Dashboard example
 

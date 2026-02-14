@@ -20,6 +20,8 @@ CONF_PRICE_SIMILARITY_PCT = "price_similarity_pct"
 CONF_MIN_CONSECUTIVE_HOURS = "min_consecutive_hours"
 CONF_CONTROLLED_ENTITIES = "controlled_entities"
 CONF_SELECTION_MODE = "selection_mode"
+CONF_EXCLUDE_FROM = "exclude_from"
+CONF_EXCLUDE_UNTIL = "exclude_until"
 
 # Selection mode values
 SELECTION_MODE_CHEAPEST = "cheapest"
@@ -40,5 +42,6 @@ UPDATE_INTERVAL_MINUTES = 15
 # Sensor states
 STATE_ACTIVE = "active"
 STATE_STANDBY = "standby"
+STATE_EXCLUDED = "excluded"
 STATE_FORCED_ON = "forced_on"
 STATE_FORCED_OFF = "forced_off"

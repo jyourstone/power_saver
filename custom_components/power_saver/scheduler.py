@@ -7,7 +7,7 @@ It is a direct port of the AppDaemon PowerSaverManager scheduling logic.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +53,50 @@ def _compute_similarity_threshold(
     return threshold
 
 
+def _parse_time(value: str) -> time:
+    """Parse a time string ('HH:MM:SS' or 'HH:MM') into a time object."""
+    parts = value.strip().split(":")
+    hour = int(parts[0])
+    minute = int(parts[1]) if len(parts) > 1 else 0
+    second = int(parts[2]) if len(parts) > 2 else 0
+    return time(hour, minute, second)
+
+
+def _is_excluded(
+    slot_start: datetime,
+    exclude_from: str | None,
+    exclude_until: str | None,
+) -> bool:
+    """Check if a slot falls within the excluded time range.
+
+    Args:
+        slot_start: The start time of the slot (timezone-aware datetime).
+        exclude_from: Start of excluded range ("HH:MM:SS" or "HH:MM"), or None.
+        exclude_until: End of excluded range ("HH:MM:SS" or "HH:MM"), or None.
+
+    Returns:
+        True if the slot should be excluded, False otherwise.
+        Returns False if either parameter is None (feature disabled).
+    """
+    if not exclude_from or not exclude_until:
+        return False
+
+    slot_time = slot_start.time()
+    start = _parse_time(exclude_from)
+    end = _parse_time(exclude_until)
+
+    if start == end:
+        # Zero-length range: nothing excluded
+        return False
+
+    if start < end:
+        # Normal range (e.g., 00:00 to 06:00)
+        return start <= slot_time < end
+    else:
+        # Cross-midnight range (e.g., 22:00 to 06:00)
+        return slot_time >= start or slot_time < end
+
+
 def _process_day_slots(
     sorted_slots: list[dict],
     activated_count: int,
@@ -61,6 +105,8 @@ def _process_day_slots(
     always_expensive: float | None,
     now: datetime,
     inverted: bool = False,
+    exclude_from: str | None = None,
+    exclude_until: str | None = None,
 ) -> tuple[list[dict], int]:
     """Process a day's price-sorted slots into schedule entries.
 
@@ -75,6 +121,8 @@ def _process_day_slots(
                          In inverted mode: always activate at or above this price.
         now: Current datetime for timezone conversion.
         inverted: If True, select most expensive hours and swap threshold roles.
+        exclude_from: Start of excluded time range ("HH:MM:SS"), or None.
+        exclude_until: End of excluded time range ("HH:MM:SS"), or None.
 
     Returns:
         Tuple of (schedule_entries, remaining_activated_count).
@@ -84,6 +132,15 @@ def _process_day_slots(
         try:
             start = _to_datetime(slot.get("start")).astimezone(now.tzinfo)
             price = float(slot.get("value", 0))
+
+            # Check if slot falls in excluded time range
+            if _is_excluded(start, exclude_from, exclude_until):
+                entries.append({
+                    "price": round(price, 3),
+                    "time": start.isoformat(),
+                    "status": "excluded",
+                })
+                continue
 
             if inverted:
                 is_within_threshold = threshold is not None and price >= threshold
@@ -129,6 +186,8 @@ def build_schedule(
     price_similarity_pct: float | None = None,
     min_consecutive_hours: float | None = None,
     selection_mode: str = "cheapest",
+    exclude_from: str | None = None,
+    exclude_until: str | None = None,
 ) -> list[dict]:
     """Build a schedule from Nordpool price data.
 
@@ -166,6 +225,11 @@ def build_schedule(
         selection_mode: "cheapest" (default) selects the cheapest slots;
             "most_expensive" inverts the logic to select the most expensive slots
             and swaps the roles of always_cheap/always_expensive thresholds.
+        exclude_from: Start of excluded time range ("HH:MM:SS"). Slots in this
+            range are never activated and marked as "excluded". None = disabled.
+        exclude_until: End of excluded time range ("HH:MM:SS"). Both exclude_from
+            and exclude_until must be set to enable. Supports cross-midnight
+            ranges (e.g., "22:00:00" to "06:00:00"). None = disabled.
 
     Returns:
         List of schedule dicts: [{"price": float, "time": str, "status": str}, ...]
@@ -199,6 +263,7 @@ def build_schedule(
     today_entries, activated_count = _process_day_slots(
         sorted_today, activated_count, today_threshold,
         always_cheap, always_expensive, now, inverted,
+        exclude_from, exclude_until,
     )
     schedule.extend(today_entries)
 
@@ -213,6 +278,7 @@ def build_schedule(
         tomorrow_entries, activated_count = _process_day_slots(
             sorted_tomorrow, activated_count, tomorrow_threshold,
             always_cheap, always_expensive, now, inverted,
+            exclude_from, exclude_until,
         )
         schedule.extend(tomorrow_entries)
 

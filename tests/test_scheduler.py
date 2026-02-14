@@ -24,6 +24,7 @@ find_current_slot = scheduler.find_current_slot
 find_next_change = scheduler.find_next_change
 build_activity_history = scheduler.build_activity_history
 _find_active_blocks = scheduler._find_active_blocks
+_is_excluded = scheduler._is_excluded
 
 # TZ and make_nordpool_slot are defined in conftest.py, which pytest loads
 # automatically. We just need to define them here for direct use in tests.
@@ -867,3 +868,262 @@ class TestMostExpensiveMode:
         for a, b in zip(schedule_default, schedule_explicit, strict=True):
             assert a["status"] == b["status"]
             assert a["time"] == b["time"]
+
+
+class TestIsExcluded:
+    """Tests for the _is_excluded helper function."""
+
+    def test_none_params_returns_false(self):
+        """Feature is disabled when either param is None."""
+        dt = datetime(2026, 2, 6, 3, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, None, None) is False
+        assert _is_excluded(dt, "00:00:00", None) is False
+        assert _is_excluded(dt, None, "06:00:00") is False
+
+    def test_normal_range_inside(self):
+        """Slot within a normal (non-crossing) range is excluded."""
+        dt = datetime(2026, 2, 6, 3, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "00:00:00", "06:00:00") is True
+
+    def test_normal_range_outside(self):
+        """Slot outside a normal range is not excluded."""
+        dt = datetime(2026, 2, 6, 10, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "00:00:00", "06:00:00") is False
+
+    def test_normal_range_boundary_start_inclusive(self):
+        """Slot at the start boundary is excluded (inclusive)."""
+        dt = datetime(2026, 2, 6, 0, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "00:00:00", "06:00:00") is True
+
+    def test_normal_range_boundary_end_exclusive(self):
+        """Slot at the end boundary is not excluded (exclusive)."""
+        dt = datetime(2026, 2, 6, 6, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "00:00:00", "06:00:00") is False
+
+    def test_cross_midnight_inside_before(self):
+        """Slot before midnight in a cross-midnight range is excluded."""
+        dt = datetime(2026, 2, 6, 23, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "22:00:00", "06:00:00") is True
+
+    def test_cross_midnight_inside_after(self):
+        """Slot after midnight in a cross-midnight range is excluded."""
+        dt = datetime(2026, 2, 6, 3, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "22:00:00", "06:00:00") is True
+
+    def test_cross_midnight_outside(self):
+        """Slot outside a cross-midnight range is not excluded."""
+        dt = datetime(2026, 2, 6, 12, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "22:00:00", "06:00:00") is False
+
+    def test_equal_start_end_excludes_nothing(self):
+        """Zero-length range excludes nothing."""
+        dt = datetime(2026, 2, 6, 3, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "06:00:00", "06:00:00") is False
+
+    def test_hhmm_format(self):
+        """Accepts HH:MM format without seconds."""
+        dt = datetime(2026, 2, 6, 3, 0, 0, tzinfo=TZ)
+        assert _is_excluded(dt, "00:00", "06:00") is True
+
+
+class TestExcludedHours:
+    """Tests for the excluded hours feature in build_schedule."""
+
+    def test_basic_exclusion(self, now, today_prices):
+        """Slots in excluded range get 'excluded' status."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            exclude_from="00:00:00",
+            exclude_until="06:00:00",
+        )
+
+        # Hours 0-5 should be excluded
+        for s in schedule:
+            slot_hour = datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            if slot_hour < 6:
+                assert s["status"] == "excluded", f"Hour {slot_hour} should be excluded"
+
+    def test_excluded_slots_dont_consume_quota(self, now, today_prices):
+        """Excluded slots don't reduce the activation quota."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        # Without exclusion
+        schedule_no_excl = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+        )
+        # With exclusion of hours 0-5 (which happen to be the cheapest)
+        schedule_with_excl = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            exclude_from="00:00:00",
+            exclude_until="06:00:00",
+        )
+
+        active_no_excl = [s for s in schedule_no_excl if s["status"] == "active"]
+        active_with_excl = [s for s in schedule_with_excl if s["status"] == "active"]
+        excluded = [s for s in schedule_with_excl if s["status"] == "excluded"]
+
+        # Should still have active slots (from non-excluded hours)
+        assert len(active_with_excl) > 0
+        assert len(excluded) == 6  # Hours 0-5
+        # Total non-excluded active slots should still meet min_hours quota
+        assert len(active_with_excl) >= 10  # 2.5 hours * 4 slots
+
+    def test_exclusion_overrides_always_cheap(self, now, today_prices):
+        """Excluded slots stay excluded even if price is below always_cheap."""
+        # Hours 0-5 have the cheapest prices (0.03-0.10)
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            always_cheap=0.10,
+            exclude_from="00:00:00",
+            exclude_until="06:00:00",
+        )
+
+        for s in schedule:
+            slot_hour = datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            if slot_hour < 6:
+                assert s["status"] == "excluded", (
+                    f"Hour {slot_hour} at price {s['price']} should be excluded "
+                    f"even though price <= always_cheap"
+                )
+
+    def test_cross_midnight_exclusion(self, now, today_prices, tomorrow_prices):
+        """Cross-midnight range (e.g., 22:00-06:00) works across both days."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            exclude_from="22:00:00",
+            exclude_until="06:00:00",
+        )
+
+        for s in schedule:
+            slot_hour = datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            if slot_hour >= 22 or slot_hour < 6:
+                assert s["status"] == "excluded", f"Hour {slot_hour} should be excluded"
+
+    def test_disabled_when_both_none(self, now, today_prices):
+        """Feature has no effect when both params are None."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            exclude_from=None,
+            exclude_until=None,
+        )
+
+        excluded = [s for s in schedule if s["status"] == "excluded"]
+        assert len(excluded) == 0
+
+    def test_rolling_window_does_not_activate_excluded(self, now, today_prices):
+        """Rolling window constraint does not activate excluded slots."""
+        # Use a small rolling window that would normally need more activations
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=4,
+            now=now,
+            rolling_window_hours=8,
+            exclude_from="00:00:00",
+            exclude_until="06:00:00",
+        )
+
+        for s in schedule:
+            slot_hour = datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            if slot_hour < 6:
+                assert s["status"] == "excluded", (
+                    f"Hour {slot_hour} should remain excluded despite rolling window"
+                )
+
+    def test_consecutive_hours_does_not_bridge_excluded(self, now, today_prices):
+        """Min consecutive hours does not extend through excluded slots."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            min_consecutive_hours=2.0,
+            exclude_from="00:00:00",
+            exclude_until="06:00:00",
+        )
+
+        for s in schedule:
+            slot_hour = datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            if slot_hour < 6:
+                assert s["status"] == "excluded", (
+                    f"Hour {slot_hour} should remain excluded despite consecutive constraint"
+                )
+
+    def test_all_hours_excluded(self, now, today_prices):
+        """When all hours are excluded, everything is excluded and nothing activates."""
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            exclude_from="00:00:00",
+            exclude_until="00:00:01",
+        )
+        # This is nearly a 24h exclusion (00:00:00 to 00:00:01 next day)
+        # Actually exclude_from < exclude_until, so only the first second is excluded
+        # Let's test with a cross-midnight range that covers everything
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            exclude_from="00:00:00",
+            exclude_until="23:59:59",
+        )
+
+        excluded = [s for s in schedule if s["status"] == "excluded"]
+        active = [s for s in schedule if s["status"] == "active"]
+        assert len(excluded) == 24  # All 24 hours
+        assert len(active) == 0
+
+    def test_inverted_mode_with_exclusion(self, now, today_prices):
+        """Excluded hours work the same in most_expensive mode."""
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 11)]
+        schedule = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=2.5,
+            now=now,
+            prev_activity_history=history,
+            selection_mode="most_expensive",
+            exclude_from="18:00:00",
+            exclude_until="22:00:00",
+        )
+
+        for s in schedule:
+            slot_hour = datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            if 18 <= slot_hour < 22:
+                assert s["status"] == "excluded", (
+                    f"Hour {slot_hour} should be excluded in inverted mode"
+                )
+
+        # Non-excluded slots should still have some active ones
+        active = [s for s in schedule if s["status"] == "active"]
+        assert len(active) > 0

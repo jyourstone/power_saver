@@ -30,6 +30,7 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     TextSelector,
+    TimeSelector,
 )
 from homeassistant.util import slugify
 
@@ -37,6 +38,8 @@ from .const import (
     CONF_ALWAYS_CHEAP,
     CONF_ALWAYS_EXPENSIVE,
     CONF_CONTROLLED_ENTITIES,
+    CONF_EXCLUDE_FROM,
+    CONF_EXCLUDE_UNTIL,
     CONF_MIN_CONSECUTIVE_HOURS,
     CONF_MIN_HOURS,
     CONF_NAME,
@@ -58,10 +61,18 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _optional_number(key: str, defaults: dict[str, Any]) -> vol.Optional:
-    """Create vol.Optional with default only if a value is stored."""
+    """Create vol.Optional with suggested value pre-fill (allows clearing)."""
     val = defaults.get(key)
     if val is not None:
-        return vol.Optional(key, default=val)
+        return vol.Optional(key, description={"suggested_value": val})
+    return vol.Optional(key)
+
+
+def _optional_time(key: str, defaults: dict[str, Any]) -> vol.Optional:
+    """Create vol.Optional for time fields with suggested value pre-fill (allows clearing)."""
+    val = defaults.get(key)
+    if val is not None:
+        return vol.Optional(key, description={"suggested_value": val})
     return vol.Optional(key)
 
 
@@ -133,6 +144,9 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     unit_of_measurement="hours",
                 )
             ),
+            # Optional excluded time range
+            _optional_time(CONF_EXCLUDE_FROM, defaults): TimeSelector(),
+            _optional_time(CONF_EXCLUDE_UNTIL, defaults): TimeSelector(),
             # Optional entity control
             vol.Optional(
                 CONF_CONTROLLED_ENTITIES,
@@ -199,6 +213,8 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ALWAYS_EXPENSIVE: user_input.get(CONF_ALWAYS_EXPENSIVE),
                     CONF_PRICE_SIMILARITY_PCT: user_input.get(CONF_PRICE_SIMILARITY_PCT),
                     CONF_MIN_CONSECUTIVE_HOURS: user_input.get(CONF_MIN_CONSECUTIVE_HOURS),
+                    CONF_EXCLUDE_FROM: user_input.get(CONF_EXCLUDE_FROM),
+                    CONF_EXCLUDE_UNTIL: user_input.get(CONF_EXCLUDE_UNTIL),
                     CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
                 }
 
