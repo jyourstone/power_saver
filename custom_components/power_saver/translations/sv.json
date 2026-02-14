@@ -100,8 +100,11 @@
       }
     },
     "switch": {
-      "override": {
+      "force_on": {
         "name": "Alltid på"
+      },
+      "force_off": {
+        "name": "Alltid av"
       }
     }
   }

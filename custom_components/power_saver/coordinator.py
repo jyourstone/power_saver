@@ -32,7 +32,8 @@ from .const import (
     DOMAIN,
     NORDPOOL_TYPE_HACS,
     STATE_ACTIVE,
-    STATE_OVERRIDE,
+    STATE_FORCED_OFF,
+    STATE_FORCED_ON,
     STATE_STANDBY,
     UPDATE_INTERVAL_MINUTES,
 )
@@ -81,18 +82,35 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._history_loaded = False
         self._unsub_nordpool: callback | None = None
         self._previous_state: str | None = None
-        self._override_active: bool = False
+        self._force_on: bool = False
+        self._force_off: bool = False
 
     @property
-    def override_active(self) -> bool:
+    def force_on_active(self) -> bool:
         """Return whether Always on is active."""
-        return self._override_active
+        return self._force_on
 
-    async def async_set_override(self, active: bool) -> None:
+    @property
+    def force_off_active(self) -> bool:
+        """Return whether Always off is active."""
+        return self._force_off
+
+    async def async_set_force_on(self, active: bool) -> None:
         """Set or clear the Always on state."""
-        self._override_active = active
+        self._force_on = active
         if active:
+            self._force_off = False
             await self._control_entities(STATE_ACTIVE)
+        else:
+            self._previous_state = None  # Force re-evaluation on next update
+        await self.async_request_refresh()
+
+    async def async_set_force_off(self, active: bool) -> None:
+        """Set or clear the Always off state."""
+        self._force_off = active
+        if active:
+            self._force_on = False
+            await self._control_entities(STATE_STANDBY)
         else:
             self._previous_state = None  # Force re-evaluation on next update
         await self.async_request_refresh()
@@ -216,10 +234,13 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         last_active_time = self._activity_history[-1] if self._activity_history else None
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
 
-        # Override mode: bypass schedule, force entities on
-        if self._override_active:
-            current_state = STATE_OVERRIDE
-            self._previous_state = STATE_OVERRIDE
+        # Override mode: bypass schedule
+        if self._force_on:
+            current_state = STATE_FORCED_ON
+            self._previous_state = STATE_FORCED_ON
+        elif self._force_off:
+            current_state = STATE_FORCED_OFF
+            self._previous_state = STATE_FORCED_OFF
         else:
             # Control entities on state change
             if current_state != self._previous_state:
@@ -245,7 +266,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         if not entities:
             return
 
-        service = SERVICE_TURN_ON if new_state in (STATE_ACTIVE, STATE_OVERRIDE) else SERVICE_TURN_OFF
+        service = SERVICE_TURN_ON if new_state in (STATE_ACTIVE, STATE_FORCED_ON) else SERVICE_TURN_OFF
         _LOGGER.info(
             "State changed to %s, calling homeassistant.%s for %s",
             new_state, service, entities,

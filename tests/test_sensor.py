@@ -72,20 +72,36 @@ def test_status_sensor_icon_standby():
     assert sensor.icon == "mdi:power-plug-off"
 
 
-def test_status_sensor_native_value_override():
-    """Test sensor returns 'override' when coordinator says override."""
+def test_status_sensor_native_value_forced_on():
+    """Test sensor returns 'forced_on' when coordinator says forced_on."""
     coordinator = MagicMock()
-    coordinator.data = PowerSaverData(current_state="override")
+    coordinator.data = PowerSaverData(current_state="forced_on")
     sensor = PowerSaverSensor(coordinator, make_config_entry())
-    assert sensor.native_value == "override"
+    assert sensor.native_value == "forced_on"
 
 
-def test_status_sensor_icon_override():
-    """Test icon when in override state."""
+def test_status_sensor_native_value_forced_off():
+    """Test sensor returns 'forced_off' when coordinator says forced_off."""
     coordinator = MagicMock()
-    coordinator.data = PowerSaverData(current_state="override")
+    coordinator.data = PowerSaverData(current_state="forced_off")
+    sensor = PowerSaverSensor(coordinator, make_config_entry())
+    assert sensor.native_value == "forced_off"
+
+
+def test_status_sensor_icon_forced_on():
+    """Test icon when in forced_on state."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(current_state="forced_on")
     sensor = PowerSaverSensor(coordinator, make_config_entry())
     assert sensor.icon == "mdi:hand-back-right"
+
+
+def test_status_sensor_icon_forced_off():
+    """Test icon when in forced_off state."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(current_state="forced_off")
+    sensor = PowerSaverSensor(coordinator, make_config_entry())
+    assert sensor.icon == "mdi:hand-back-right-off"
 
 
 def test_status_sensor_icon_no_data():
