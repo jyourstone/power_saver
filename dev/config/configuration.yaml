@@ -1,8 +1,0 @@
-# Minimal Home Assistant config for Power Saver development
-
-default_config:
-
-logger:
-  default: info
-  logs:
-    custom_components.power_saver: debug
