@@ -25,4 +25,3 @@ dist/
 
 # Dev environment - HA generates these in dev/config/
 dev/config/*
-!dev/config/configuration.yaml
