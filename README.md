@@ -122,13 +122,13 @@ The two switches are mutually exclusive — enabling one automatically disables 
 |--------|------|-------------|
 | **Schedule** | Sensor | Full schedule with all time slots, prices, and statuses |
 | **Last Active** | Sensor | Timestamp of the last active slot |
-| **Active Hours in Window** | Sensor | Hours of activity within the rolling window |
+| **Active Hours in Window** | Sensor | Scheduled active hours in the upcoming rolling window |
 | **Next Change** | Sensor | Timestamp of the next state transition (displayed as relative time) |
 | **Emergency Mode** | Binary sensor | Indicates if running without price data (problem badge) |
 
 ## How it works
 
-1. **Price data** — Reads hourly prices from your Nord Pool sensor (today + tomorrow when available)
+1. **Price data** — Reads prices from your Nord Pool sensor (today + tomorrow when available)
 2. **Excluded hours** (optional) — Marks slots in the excluded time range as permanently off, removing them from scheduling
 3. **Slot selection** — Selects the cheapest (or most expensive) slots from the remaining hours to meet your minimum active hours
 4. **Thresholds** — Applies always-cheap (force on) and always-expensive (force off) price thresholds
@@ -211,12 +211,12 @@ series:
       legend_value: false
     data_generator: |
       return entity.attributes.schedule.map((entry) => {
-        return [new Date(entry.time), entry.price];
+        return [new Date(entry.time).getTime(), entry.price];
       });
   - entity: sensor.heater_power_saver_schedule
     data_generator: |
       return entity.attributes.schedule.map((entry) => {
-        return [new Date(entry.time), entry.status === "active" ? 1 : 0];
+        return [new Date(entry.time).getTime(), entry.status === "active" ? 1 : 0];
       });
     yaxis_id: powersaver
     name: " "
