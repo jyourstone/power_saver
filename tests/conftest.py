@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from helpers import TZ, make_nordpool_hour, make_nordpool_slot  # noqa: F401
+from helpers import TZ, make_nordpool_hour
 
 
 @pytest.fixture
