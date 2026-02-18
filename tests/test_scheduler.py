@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,26 +26,7 @@ build_activity_history = scheduler.build_activity_history
 _find_active_blocks = scheduler._find_active_blocks
 _is_excluded = scheduler._is_excluded
 
-# TZ and make_nordpool_slot are defined in conftest.py, which pytest loads
-# automatically. We just need to define them here for direct use in tests.
-TZ = timezone(timedelta(hours=1), name="CET")
-
-
-def make_nordpool_slot(hour: int, price: float, day_offset: int = 0, quarter: int = 0) -> dict:
-    """Create a Nordpool-style 15-minute price slot for testing."""
-    base = datetime(2026, 2, 6, tzinfo=TZ) + timedelta(days=day_offset)
-    start = base.replace(hour=hour, minute=quarter * 15, second=0, microsecond=0)
-    end = start + timedelta(minutes=15)
-    return {
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-        "value": price,
-    }
-
-
-def make_nordpool_hour(hour: int, price: float, day_offset: int = 0) -> list[dict]:
-    """Create 4 Nordpool-style 15-minute slots for a full hour."""
-    return [make_nordpool_slot(hour, price, day_offset, q) for q in range(4)]
+from helpers import TZ, make_nordpool_hour, make_nordpool_slot
 
 
 class TestBuildSchedule:
