@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,21 +26,7 @@ build_activity_history = scheduler.build_activity_history
 _find_active_blocks = scheduler._find_active_blocks
 _is_excluded = scheduler._is_excluded
 
-# TZ and make_nordpool_slot are defined in conftest.py, which pytest loads
-# automatically. We just need to define them here for direct use in tests.
-TZ = timezone(timedelta(hours=1), name="CET")
-
-
-def make_nordpool_slot(hour: int, price: float, day_offset: int = 0) -> dict:
-    """Create a Nordpool-style price slot for testing."""
-    base = datetime(2026, 2, 6, tzinfo=TZ) + timedelta(days=day_offset)
-    start = base.replace(hour=hour, minute=0, second=0, microsecond=0)
-    end = start + timedelta(hours=1)
-    return {
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-        "value": price,
-    }
+from helpers import TZ, make_nordpool_hour, make_nordpool_slot
 
 
 class TestBuildSchedule:
@@ -129,8 +115,8 @@ class TestBuildSchedule:
             now=now,
         )
 
-        # Should have 48 slots total (24 today + 24 tomorrow)
-        assert len(schedule) == 48
+        # Should have 192 slots total (96 today + 96 tomorrow)
+        assert len(schedule) == 192
 
     def test_rolling_window_shares_quota(self, now, today_prices, tomorrow_prices):
         """In rolling window mode, quota is shared across both days."""
@@ -169,7 +155,7 @@ class TestBuildSchedule:
         )
 
         # Only tomorrow's slots
-        assert len(schedule) == 24
+        assert len(schedule) == 96
 
 
 class TestPriceSimilarityThreshold:
@@ -177,8 +163,8 @@ class TestPriceSimilarityThreshold:
 
     def test_threshold_activates_extra_slots(self, now):
         """Slots within the threshold percentage of the cheapest should be activated."""
-        # Flat prices: all between 0.10 and 0.13
-        prices = [make_nordpool_slot(h, 0.10 + (h % 4) * 0.01) for h in range(24)]
+        # Flat prices: all between 0.10 and 0.13 (4 quarter-hour slots per hour)
+        prices = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.10 + (h % 4) * 0.01)]
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
@@ -215,7 +201,7 @@ class TestPriceSimilarityThreshold:
     def test_threshold_respects_always_expensive(self, now):
         """Threshold should not activate slots above always_expensive."""
         # All prices clustered around 0.50
-        prices = [make_nordpool_slot(h, 0.50 + h * 0.01) for h in range(24)]
+        prices = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.50 + h * 0.01)]
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
@@ -232,13 +218,13 @@ class TestPriceSimilarityThreshold:
 
     def test_threshold_works_for_negative_prices(self, now):
         """When cheapest price is negative, threshold should apply using additive offset."""
-        # 4 negative slots, then 20 expensive slots
+        # 4 negative-price hours, then 20 expensive hours (4 quarter-slots each)
         prices = (
-            [make_nordpool_slot(h, -0.10 + h * 0.02) for h in range(4)]
-            + [make_nordpool_slot(h, 0.50) for h in range(4, 24)]
+            [slot for h in range(4) for slot in make_nordpool_hour(h, -0.10 + h * 0.02)]
+            + [slot for h in range(4, 24) for slot in make_nordpool_hour(h, 0.50)]
         )
         # min_price = -0.10, pct = 50% → offset = 0.05, threshold = -0.05
-        # Slots <= -0.05: -0.10, -0.08, -0.06 (3 slots)
+        # Hours <= -0.05: h0(-0.10), h1(-0.08), h2(-0.06) = 3 hours × 4 slots = 12 slots
         # always_cheap=-1.0 so it doesn't activate negative prices on its own
         schedule_with = build_schedule(
             raw_today=prices,
@@ -261,14 +247,14 @@ class TestPriceSimilarityThreshold:
 
         # Without threshold: only 1 slot (min_hours quota)
         assert len(active_without) == 1
-        # With threshold: -0.10, -0.08, -0.06 are all <= -0.05
-        assert len(active_with) == 3
+        # With threshold: 3 hours × 4 quarter-slots = 12 active slots
+        assert len(active_with) == 12
         assert all(s["price"] <= -0.05 for s in active_with)
 
     def test_threshold_applies_to_tomorrow_independently(self, now):
         """Tomorrow should use its own cheapest price for threshold calculation."""
-        today = [make_nordpool_slot(h, 0.10) for h in range(24)]  # All 0.10
-        tomorrow = [make_nordpool_slot(h, 0.50 + h * 0.01, day_offset=1) for h in range(24)]
+        today = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.10)]
+        tomorrow = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.50 + h * 0.01, day_offset=1)]
 
         schedule = build_schedule(
             raw_today=today,
@@ -286,9 +272,9 @@ class TestPriceSimilarityThreshold:
         ]
 
         # Tomorrow's threshold: 0.50 * 1.10 = 0.55
-        # Slots 0.50-0.55 (hours 0-5) should be active = 6 slots
+        # Hours 0-5 at prices 0.50-0.55 should be active = 6 hours × 4 slots = 24 slots
         # More than just the 1 min_hours slot
-        assert len(tomorrow_active) == 6
+        assert len(tomorrow_active) == 24
         # All active tomorrow slots should be <= 0.55
         for s in tomorrow_active:
             assert s["price"] <= 0.55
@@ -351,11 +337,12 @@ class TestFindCurrentSlot:
             now=now,
         )
 
-        # now is 14:30, should find the 14:00 slot
+        # now is 14:30, should find the 14:30 slot (quarter=2 of hour 14)
         current = find_current_slot(schedule, now)
         assert current is not None
         slot_time = datetime.fromisoformat(current["time"]).astimezone(TZ)
         assert slot_time.hour == 14
+        assert slot_time.minute == 30
 
     def test_returns_none_when_no_match(self):
         """Should return None when time is outside schedule range."""
@@ -530,67 +517,67 @@ class TestMinConsecutiveHours:
 
     def test_short_block_gets_extended(self, now):
         """A single short block should be extended to meet the minimum."""
-        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+        prices = [slot for h, p in enumerate([
             0.50, 0.10, 0.50, 0.50, 0.50,  # hour 1 cheap, isolated
             0.50, 0.50, 0.10, 0.50, 0.50,  # hour 7 cheap, isolated
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50,
-        ])]
+        ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=0.5,  # 2 slots → activates hours 1 and 7 (cheapest)
+            min_hours=2.0,  # 8 slots → activates hours 1(4) and 7(4) (cheapest)
             now=now,
             prev_activity_history=history,
-            min_consecutive_hours=2,  # Each block must be >= 2 hours
+            min_consecutive_hours=2,  # Each block must be >= 2 hours (8 quarter-slots)
         )
 
         # Find the active blocks
         blocks = _find_active_blocks(schedule)
-        # All blocks should be at least 2 slots (2 hours with hourly data)
+        # All blocks should be at least 8 quarter-slots (2 hours)
         for start, length in blocks:
-            assert length >= 2, f"Block at index {start} has length {length}, expected >= 2"
+            assert length >= 8, f"Block at index {start} has length {length}, expected >= 8"
 
     def test_gap_filling_merges_blocks(self, now):
         """Two nearby blocks with a small gap should merge when gap is filled."""
         # Prices: cheap at hours 2-3 and 5-6, expensive at hour 4
         # but not ALWAYS_EXPENSIVE, so gap can be filled
-        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+        prices = [slot for h, p in enumerate([
             0.50, 0.50, 0.01, 0.01, 0.30,  # hours 2-3 cheap, hour 4 moderate
             0.01, 0.01, 0.50, 0.50, 0.50,  # hours 5-6 cheap
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50,
-        ])]
+        ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 17)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=1.0,  # 4 slots → activates hours 2, 3, 5, 6
+            min_hours=3.0,  # 12 slots → activates hours 2(4), 3(4), 5(4) (cheapest)
             now=now,
             prev_activity_history=history,
-            min_consecutive_hours=3,  # Need blocks of at least 3
+            min_consecutive_hours=3,  # Need blocks of at least 3 hours (12 quarter-slots)
         )
 
         blocks = _find_active_blocks(schedule)
         # The gap at hour 4 should be filled, creating one merged block
         for start, length in blocks:
-            assert length >= 3, f"Block at index {start} has length {length}, expected >= 3"
+            assert length >= 12, f"Block at index {start} has length {length}, expected >= 12"
 
     def test_always_expensive_blocks_extension(self, now):
         """Slots at or above always_expensive should never be activated for extension."""
-        # Two isolated cheap slots with an expensive slot between them
-        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+        # Two isolated cheap hours with an expensive hour between them
+        prices = [slot for h, p in enumerate([
             0.50, 0.01, 5.00, 0.01, 0.50,  # hour 2 = very expensive
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50,
-        ])]
+        ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
@@ -636,8 +623,8 @@ class TestMinConsecutiveHours:
 
     def test_capped_at_min_hours(self, now):
         """Effective minimum should be capped at min_hours."""
-        # min_hours=1 (4 slots), min_consecutive=5 → effective = 1 hour (4 slots)
-        prices = [make_nordpool_slot(h, 0.50 if h != 10 else 0.01) for h in range(24)]
+        # min_hours=1 (4 slots), min_consecutive=5 → effective = 1 hour (4 quarter-slots)
+        prices = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.50 if h != 10 else 0.01)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
 
         schedule = build_schedule(
@@ -650,12 +637,12 @@ class TestMinConsecutiveHours:
         )
 
         # Active count should not exceed much beyond min_hours
-        # The block at hour 10 should be 4 slots (1 hour), not 20 (5 hours)
+        # The block at hour 10 should be 4 quarter-slots (1 hour), not 80 (5 hours)
         blocks = _find_active_blocks(schedule)
         for start, length in blocks:
-            # Each block should be at most slightly more than 4 slots
-            # (rolling window might add some, but not 20)
-            assert length <= 8, f"Block at {start} too long ({length}), min_consecutive should be capped"
+            # Each block should be at most slightly more than 4 quarter-slots
+            # (rolling window might add some, but not 80)
+            assert length <= 16, f"Block at {start} too long ({length}), min_consecutive should be capped"
 
     def test_already_long_blocks_untouched(self, now, today_prices):
         """Blocks already meeting the minimum should not be modified."""
@@ -675,51 +662,52 @@ class TestMinConsecutiveHours:
             min_hours=6.0,
             now=now,
             prev_activity_history=history,
-            min_consecutive_hours=2,  # Blocks already > 2 hours
+            min_consecutive_hours=2,  # Blocks already > 2 hours (8 quarter-slots)
         )
 
         # Check that blocks in both schedules match
         blocks_without = _find_active_blocks(schedule_without)
         blocks_with = _find_active_blocks(schedule_with)
 
-        # If all blocks were already >= 2 hours, no changes expected
-        all_long = all(length >= 2 for _, length in blocks_without)
+        # If all blocks were already >= 8 quarter-slots (2 hours), no changes expected
+        all_long = all(length >= 8 for _, length in blocks_without)
         if all_long:
             assert blocks_without == blocks_with
 
     def test_extends_in_cheapest_direction(self, now):
         """Extension should prefer the cheaper adjacent slot."""
-        # Hour 5 is active (cheap), left neighbor (h4) is 0.20, right neighbor (h6) is 0.80
-        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+        # h5=0.01 (cheapest), h20=0.01 (second cheap island far away)
+        # h4=0.20 (cheap neighbor of h5), h6=0.80 (expensive neighbor of h5)
+        prices = [slot for h, p in enumerate([
             0.50, 0.50, 0.50, 0.50, 0.20,  # hour 4 = 0.20
             0.01,                              # hour 5 = cheapest
             0.80, 0.50, 0.50, 0.50, 0.50,   # hour 6 = 0.80
             0.50, 0.50, 0.50, 0.50, 0.50,
-            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.01,   # hour 20 = also cheapest
             0.50, 0.50, 0.50,
-        ])]
-        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
+        ]) for slot in make_nordpool_hour(h, p)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=0.5,  # 2 slots
+            min_hours=2.0,  # 8 slots → h5(4) + h20(4)
             now=now,
             prev_activity_history=history,
-            min_consecutive_hours=2,
+            min_consecutive_hours=2,  # 8 quarter-slots per block
         )
 
-        # Hour 4 (price 0.20) should be activated as extension, not hour 6 (0.80)
-        hour4_slot = next(
+        # h5 block (4 slots) extends toward h4 (0.20), not h6 (0.80)
+        hour4_slots = [
             s for s in schedule
             if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 4
-        )
-        hour6_slot = next(
+        ]
+        hour6_slots = [
             s for s in schedule
             if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
-        )
-        assert hour4_slot["status"] == "active", "Should extend toward cheaper neighbor (hour 4)"
-        assert hour6_slot["status"] == "standby", "Expensive hour 6 should not be activated"
+        ]
+        assert all(s["status"] == "active" for s in hour4_slots), "Should extend toward cheaper neighbor (hour 4)"
+        assert all(s["status"] == "standby" for s in hour6_slots), "Expensive hour 6 should not be activated"
 
 
 class TestMostExpensiveMode:
@@ -788,8 +776,8 @@ class TestMostExpensiveMode:
 
     def test_inverted_similarity_threshold(self, now):
         """Price similarity threshold should expand from most expensive price downward."""
-        # Prices clustered: 0.50, 0.49, 0.48, 0.47, repeating
-        prices = [make_nordpool_slot(h, 0.50 - (h % 4) * 0.01) for h in range(24)]
+        # Prices clustered: 0.50, 0.49, 0.48, 0.47, repeating (4 quarter-slots per hour)
+        prices = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.50 - (h % 4) * 0.01)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 19)]
         schedule = build_schedule(
             raw_today=prices,
@@ -802,8 +790,8 @@ class TestMostExpensiveMode:
         )
 
         active = [s for s in schedule if s["status"] == "active"]
-        # Slots >= 0.48 should be active: 0.50, 0.49, 0.48 (18 out of 24)
-        assert len(active) == 18
+        # Hours with price >= 0.48: 0.50, 0.49, 0.48 = 18 hours × 4 slots = 72
+        assert len(active) == 72
         # 0.47 slots should be standby (below threshold)
         for s in schedule:
             if s["price"] == 0.47:
@@ -814,37 +802,39 @@ class TestMostExpensiveMode:
 
     def test_inverted_consecutive_extends_with_most_expensive(self, now):
         """In inverted mode, consecutive extension should prefer more expensive adjacent slots."""
-        prices = [make_nordpool_slot(h, p) for h, p in enumerate([
+        # h5=0.99 (most expensive), h20=0.99 (second expensive island far away)
+        # h4=0.80 (expensive neighbor of h5), h6=0.20 (cheap neighbor of h5)
+        prices = [slot for h, p in enumerate([
             0.50, 0.50, 0.50, 0.50, 0.80,  # hour 4 = 0.80 (expensive neighbor)
             0.99,                              # hour 5 = most expensive
             0.20, 0.50, 0.50, 0.50, 0.50,   # hour 6 = 0.20 (cheap neighbor)
             0.50, 0.50, 0.50, 0.50, 0.50,
-            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.99,   # hour 20 = also most expensive
             0.50, 0.50, 0.50,
-        ])]
-        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
+        ]) for slot in make_nordpool_hour(h, p)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=0.5,  # 2 slots
+            min_hours=2.0,  # 8 slots → h5(4) + h20(4)
             now=now,
             prev_activity_history=history,
-            min_consecutive_hours=2,
+            min_consecutive_hours=2,  # 8 quarter-slots per block
             selection_mode="most_expensive",
         )
 
-        # Hour 4 (0.80) should be activated as extension, not hour 6 (0.20)
-        hour4_slot = next(
+        # h5 block (4 slots) extends toward h4 (0.80), not h6 (0.20)
+        hour4_slots = [
             s for s in schedule
             if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 4
-        )
-        hour6_slot = next(
+        ]
+        hour6_slots = [
             s for s in schedule
             if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
-        )
-        assert hour4_slot["status"] == "active", "Should extend toward more expensive neighbor"
-        assert hour6_slot["status"] == "standby", "Cheap hour 6 should not be activated"
+        ]
+        assert all(s["status"] == "active" for s in hour4_slots), "Should extend toward more expensive neighbor"
+        assert all(s["status"] == "standby" for s in hour6_slots), "Cheap hour 6 should not be activated"
 
     def test_default_mode_is_cheapest(self, now, today_prices):
         """Without explicit selection_mode, behavior should match 'cheapest'."""
@@ -978,7 +968,7 @@ class TestExcludedHours:
         assert len(active_no_excl) >= 10  # 2.5 hours * 4 slots
         # Should still have active slots (from non-excluded hours)
         assert len(active_with_excl) > 0
-        assert len(excluded) == 6  # Hours 0-5
+        assert len(excluded) == 24  # Hours 0-5 × 4 quarter-slots
         # Total non-excluded active slots should still meet min_hours quota
         assert len(active_with_excl) >= 10  # 2.5 hours * 4 slots
 
@@ -1102,7 +1092,7 @@ class TestExcludedHours:
 
         excluded = [s for s in schedule if s["status"] == "excluded"]
         active = [s for s in schedule if s["status"] == "active"]
-        assert len(excluded) == 24  # All 24 hours
+        assert len(excluded) == 96  # All 24 hours × 4 quarter-slots
         assert len(active) == 0
 
     def test_inverted_mode_with_exclusion(self, now, today_prices):

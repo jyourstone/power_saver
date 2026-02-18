@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -244,8 +244,19 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         )
         await self._async_save_history()
 
-        # Compute metrics
-        active_hours_in_window = round(len(self._activity_history) / 4.0, 1)
+        # Compute active hours in the upcoming rolling window
+        window_start = now.replace(
+            minute=(now.minute // 15) * 15, second=0, microsecond=0
+        )
+        window_end = window_start + timedelta(hours=rolling_window_hours)
+        active_in_window = sum(
+            1 for s in schedule
+            if s.get("status") == STATE_ACTIVE
+            and window_start
+            <= datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
+            < window_end
+        )
+        active_hours_in_window = round(active_in_window / 4.0, 1)
         last_active_time = self._activity_history[-1] if self._activity_history else None
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
 
