@@ -795,6 +795,45 @@ class TestMinConsecutiveHours:
             assert length >= 8, f"Block at index {start} has length {length}, expected >= 8"
 
 
+    def test_block_straddling_window_boundary_not_lost(self, now):
+        """A short block at the rolling window boundary should not be deactivated and lost.
+
+        Regression: if a short active block starts inside the future window but
+        extends past future_end_idx, it would be deactivated for consolidation
+        but _find_consecutive_candidates only searches within the window, so the
+        freed slots could never be re-placed — silently losing active hours.
+        """
+        # now=14:30, rolling_window=6h → window ends at 20:30
+        # Put cheap slots at h15 (inside window) and h20 (straddles boundary)
+        hourly_prices = [0.50] * 24
+        hourly_prices[15] = 0.01  # inside window
+        hourly_prices[20] = 0.02  # straddles: starts at 20:00, block ends 20:45 > 20:30
+        prices = [slot for h, p in enumerate(hourly_prices) for slot in make_nordpool_hour(h, p)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=2.0,  # 8 slots → h15(4) + h20(4)
+            now=now,
+            rolling_window_hours=6.0,  # window: 14:30–20:30
+            prev_activity_history=history,
+            min_consecutive_hours=2,  # 8 quarter-slots — both blocks are "short"
+        )
+
+        # Count total future active slots — should not lose any
+        future_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) >= now
+        ]
+        # We requested 2 hours (8 slots); should get at least that many
+        assert len(future_active) >= 8, (
+            f"Expected at least 8 future active slots (2h) but got {len(future_active)}. "
+            "A block straddling the window boundary may have been lost during consolidation."
+        )
+
+
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
 

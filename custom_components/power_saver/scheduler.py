@@ -599,7 +599,9 @@ def _enforce_min_consecutive(
     # Only consolidate blocks that are entirely in the future
     short_blocks = [
         (start, length) for start, length in blocks
-        if length < effective_slots and start >= future_start_idx
+        if length < effective_slots
+        and start >= future_start_idx
+        and start + length <= future_end_idx
     ]
 
     if not short_blocks:
