@@ -517,65 +517,71 @@ class TestMinConsecutiveHours:
 
     def test_short_block_gets_extended(self, now):
         """A single short block should be extended to meet the minimum."""
+        # now=14:30 — put cheap hours in the future (h16, h20)
         prices = [slot for h, p in enumerate([
-            0.50, 0.10, 0.50, 0.50, 0.50,  # hour 1 cheap, isolated
-            0.50, 0.50, 0.10, 0.50, 0.50,  # hour 7 cheap, isolated
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
-            0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.10, 0.50, 0.50, 0.50,  # hour 16 cheap, isolated
+            0.10, 0.50, 0.50, 0.50,         # hour 20 cheap, isolated
         ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=2.0,  # 8 slots → activates hours 1(4) and 7(4) (cheapest)
+            min_hours=2.0,  # 8 slots → activates hours 16(4) and 20(4) (cheapest)
             now=now,
             prev_activity_history=history,
             min_consecutive_hours=2,  # Each block must be >= 2 hours (8 quarter-slots)
         )
 
-        # Find the active blocks
-        blocks = _find_active_blocks(schedule)
-        # All blocks should be at least 8 quarter-slots (2 hours)
-        for start, length in blocks:
+        # Find future active blocks
+        future_blocks = [
+            (start, length) for start, length in _find_active_blocks(schedule)
+            if start >= 0 and datetime.fromisoformat(schedule[start]["time"]).astimezone(TZ) >= now
+        ]
+        # All future blocks should be at least 8 quarter-slots (2 hours)
+        for start, length in future_blocks:
             assert length >= 8, f"Block at index {start} has length {length}, expected >= 8"
 
     def test_gap_filling_merges_blocks(self, now):
         """Two nearby blocks with a small gap should merge when gap is filled."""
-        # Prices: cheap at hours 2-3 and 5-6, expensive at hour 4
-        # but not ALWAYS_EXPENSIVE, so gap can be filled
+        # now=14:30 — put cheap hours in the future (h16-17, h19-20, gap at h18)
         prices = [slot for h, p in enumerate([
-            0.50, 0.50, 0.01, 0.01, 0.30,  # hours 2-3 cheap, hour 4 moderate
-            0.01, 0.01, 0.50, 0.50, 0.50,  # hours 5-6 cheap
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
-            0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.01, 0.01, 0.30, 0.01,  # h16-17 cheap, h18 moderate, h19 cheap
+            0.01, 0.50, 0.50, 0.50,         # h20 cheap
         ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 17)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=3.0,  # 12 slots → activates hours 2(4), 3(4), 5(4) (cheapest)
+            min_hours=3.0,  # 12 slots → activates h16(4), h17(4), h19(4) (cheapest)
             now=now,
             prev_activity_history=history,
             min_consecutive_hours=3,  # Need blocks of at least 3 hours (12 quarter-slots)
         )
 
-        blocks = _find_active_blocks(schedule)
-        # The gap at hour 4 should be filled, creating one merged block
-        for start, length in blocks:
+        # Future blocks should be merged (gap at h18 filled)
+        future_blocks = [
+            (start, length) for start, length in _find_active_blocks(schedule)
+            if datetime.fromisoformat(schedule[start]["time"]).astimezone(TZ) >= now
+        ]
+        for start, length in future_blocks:
             assert length >= 12, f"Block at index {start} has length {length}, expected >= 12"
 
     def test_always_expensive_blocks_extension(self, now):
         """Slots at or above always_expensive should never be activated for extension."""
-        # Two isolated cheap hours with an expensive hour between them
+        # now=14:30 — put cheap hours in the future with expensive barrier
         prices = [slot for h, p in enumerate([
-            0.50, 0.01, 5.00, 0.01, 0.50,  # hour 2 = very expensive
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
             0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.01, 5.00, 0.01, 0.50,  # h16 cheap, h17 very expensive, h18 cheap
             0.50, 0.50, 0.50, 0.50,
         ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
@@ -583,14 +589,14 @@ class TestMinConsecutiveHours:
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=0.5,  # 2 slots → hours 1 and 3
+            min_hours=0.5,  # 2 slots → h16 and h18
             now=now,
             always_expensive=4.00,
             prev_activity_history=history,
             min_consecutive_hours=3,  # Want 3 consecutive, but blocked by expensive
         )
 
-        # The expensive slot (hour 2, price 5.00) must stay standby
+        # The expensive slot (hour 17, price 5.00) must stay standby
         for s in schedule:
             if s["price"] >= 4.00:
                 assert s["status"] == "standby", f"Expensive slot at {s['time']} should be standby"
@@ -623,8 +629,9 @@ class TestMinConsecutiveHours:
 
     def test_capped_at_min_hours(self, now):
         """Effective minimum should be capped at min_hours."""
+        # now=14:30 — put cheap hour in the future (h18)
         # min_hours=1 (4 slots), min_consecutive=5 → effective = 1 hour (4 quarter-slots)
-        prices = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.50 if h != 10 else 0.01)]
+        prices = [slot for h in range(24) for slot in make_nordpool_hour(h, 0.50 if h != 18 else 0.01)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
 
         schedule = build_schedule(
@@ -637,7 +644,7 @@ class TestMinConsecutiveHours:
         )
 
         # Active count should not exceed much beyond min_hours
-        # The block at hour 10 should be 4 quarter-slots (1 hour), not 80 (5 hours)
+        # The block at hour 18 should be 4 quarter-slots (1 hour), not 80 (5 hours)
         blocks = _find_active_blocks(schedule)
         for start, length in blocks:
             # Each block should be at most slightly more than 4 quarter-slots
@@ -674,40 +681,118 @@ class TestMinConsecutiveHours:
         if all_long:
             assert blocks_without == blocks_with
 
-    def test_extends_in_cheapest_direction(self, now):
-        """Extension should prefer the cheaper adjacent slot."""
-        # h5=0.01 (cheapest), h20=0.01 (second cheap island far away)
-        # h4=0.20 (cheap neighbor of h5), h6=0.80 (expensive neighbor of h5)
+    def test_consolidation_prefers_cheapest_window(self, now):
+        """Consolidation should prefer the cheapest consecutive window."""
+        # now=14:30 — two cheap islands in the future at h17 and h21
+        # h16=0.20 (cheap neighbor of h17), h18=0.80 (expensive neighbor of h17)
         prices = [slot for h, p in enumerate([
-            0.50, 0.50, 0.50, 0.50, 0.20,  # hour 4 = 0.20
-            0.01,                              # hour 5 = cheapest
-            0.80, 0.50, 0.50, 0.50, 0.50,   # hour 6 = 0.80
             0.50, 0.50, 0.50, 0.50, 0.50,
-            0.50, 0.50, 0.50, 0.50, 0.01,   # hour 20 = also cheapest
-            0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.20, 0.01, 0.80, 0.50,  # h16=0.20, h17=cheapest, h18=0.80
+            0.50, 0.01, 0.50, 0.50,         # h21 = also cheapest
         ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=2.0,  # 8 slots → h5(4) + h20(4)
+            min_hours=2.0,  # 8 slots → h17(4) + h21(4)
             now=now,
             prev_activity_history=history,
             min_consecutive_hours=2,  # 8 quarter-slots per block
         )
 
-        # h5 block (4 slots) extends toward h4 (0.20), not h6 (0.80)
-        hour4_slots = [
+        # The cheapest 2-hour window should be selected by consolidation
+        # h16-h17 (0.20 + 0.01 = cheapest window) should be preferred
+        hour16_slots = [
             s for s in schedule
-            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 4
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 16
         ]
-        hour6_slots = [
+        hour18_slots = [
             s for s in schedule
-            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 18
         ]
-        assert all(s["status"] == "active" for s in hour4_slots), "Should extend toward cheaper neighbor (hour 4)"
-        assert all(s["status"] == "standby" for s in hour6_slots), "Expensive hour 6 should not be activated"
+        assert all(s["status"] == "active" for s in hour16_slots), "Cheap neighbor h16 should be in the consolidated window"
+        assert all(s["status"] == "standby" for s in hour18_slots), "Expensive h18 should not be activated"
+
+    def test_scattered_slots_consolidated_not_inflated(self, now):
+        """Scattered cheap slots should be consolidated into one block, not each extended.
+
+        Regression test: with min_hours=1 and min_consecutive_hours=1, the old code
+        would extend each of the 4 scattered cheapest slots into its own 1-hour block,
+        resulting in ~3-4 hours instead of the expected 1 hour.
+        """
+        # now=14:30 — 4 cheap slots scattered in the future at hours 15, 17, 20, 23
+        hourly_prices = [0.50] * 24
+        hourly_prices[15] = 0.01
+        hourly_prices[17] = 0.02
+        hourly_prices[20] = 0.03
+        hourly_prices[23] = 0.04
+        prices = [slot for h, p in enumerate(hourly_prices) for slot in make_nordpool_hour(h, p)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 5)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,  # 4 slots
+            now=now,
+            rolling_window_hours=24.0,
+            prev_activity_history=history,
+            min_consecutive_hours=1.0,  # Each block must be >= 1 hour (4 slots)
+        )
+
+        # Check future blocks only
+        future_blocks = [
+            (start, length) for start, length in _find_active_blocks(schedule)
+            if datetime.fromisoformat(schedule[start]["time"]).astimezone(TZ) >= now
+        ]
+
+        # All future blocks must meet the minimum consecutive requirement
+        for start, length in future_blocks:
+            assert length >= 4, f"Block at index {start} has length {length}, expected >= 4"
+
+        # Total future active time should not be inflated
+        future_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) >= now
+        ]
+        assert len(future_active) <= 8, (
+            f"Expected at most 8 future active slots (2h) but got {len(future_active)} "
+            f"({len(future_active)/4}h). "
+            "Scattered slots should be consolidated, not each extended independently."
+        )
+
+    def test_consecutive_preserves_long_blocks(self, now):
+        """Long blocks that already meet the minimum should not be disrupted."""
+        # now=14:30 — one cheap 2-hour block (h16-17) plus one scattered cheap slot (h22)
+        hourly_prices = [0.50] * 24
+        hourly_prices[16] = 0.01
+        hourly_prices[17] = 0.01
+        hourly_prices[22] = 0.02
+        prices = [slot for h, p in enumerate(hourly_prices) for slot in make_nordpool_hour(h, p)]
+        history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 13)]
+
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=3.0,  # 12 slots → h16(4) + h17(4) + h22(4)
+            now=now,
+            rolling_window_hours=24.0,
+            prev_activity_history=history,
+            min_consecutive_hours=2.0,  # 8 quarter-slots per block
+        )
+
+        # Future blocks should all meet minimum
+        future_blocks = [
+            (start, length) for start, length in _find_active_blocks(schedule)
+            if datetime.fromisoformat(schedule[start]["time"]).astimezone(TZ) >= now
+        ]
+        # The h16-h17 block (8 slots) already meets minimum, should be preserved
+        # The h22 block (4 slots) is short and should be consolidated
+        for start, length in future_blocks:
+            assert length >= 8, f"Block at index {start} has length {length}, expected >= 8"
 
 
 class TestMostExpensiveMode:
@@ -801,40 +886,40 @@ class TestMostExpensiveMode:
             assert s["price"] >= 0.48
 
     def test_inverted_consecutive_extends_with_most_expensive(self, now):
-        """In inverted mode, consecutive extension should prefer more expensive adjacent slots."""
-        # h5=0.99 (most expensive), h20=0.99 (second expensive island far away)
-        # h4=0.80 (expensive neighbor of h5), h6=0.20 (cheap neighbor of h5)
+        """In inverted mode, consecutive consolidation should prefer more expensive windows."""
+        # now=14:30 — put expensive islands in the future
+        # h17=0.99 (most expensive), h21=0.99 (second expensive island)
+        # h16=0.80 (expensive neighbor of h17), h18=0.20 (cheap neighbor of h17)
         prices = [slot for h, p in enumerate([
-            0.50, 0.50, 0.50, 0.50, 0.80,  # hour 4 = 0.80 (expensive neighbor)
-            0.99,                              # hour 5 = most expensive
-            0.20, 0.50, 0.50, 0.50, 0.50,   # hour 6 = 0.20 (cheap neighbor)
             0.50, 0.50, 0.50, 0.50, 0.50,
-            0.50, 0.50, 0.50, 0.50, 0.99,   # hour 20 = also most expensive
-            0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.50, 0.50, 0.50, 0.50,
+            0.50, 0.80, 0.99, 0.20, 0.50,  # h16=0.80, h17=most expensive, h18=0.20
+            0.50, 0.99, 0.50, 0.50,         # h21 = also most expensive
         ]) for slot in make_nordpool_hour(h, p)]
         history = [(now - timedelta(minutes=i * 15)).isoformat() for i in range(1, 9)]
 
         schedule = build_schedule(
             raw_today=prices,
             raw_tomorrow=[],
-            min_hours=2.0,  # 8 slots → h5(4) + h20(4)
+            min_hours=2.0,  # 8 slots → h17(4) + h21(4)
             now=now,
             prev_activity_history=history,
             min_consecutive_hours=2,  # 8 quarter-slots per block
             selection_mode="most_expensive",
         )
 
-        # h5 block (4 slots) extends toward h4 (0.80), not h6 (0.20)
-        hour4_slots = [
+        # Consolidation should prefer the most expensive window (h16-h17)
+        hour16_slots = [
             s for s in schedule
-            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 4
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 16
         ]
-        hour6_slots = [
+        hour18_slots = [
             s for s in schedule
-            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 6
+            if datetime.fromisoformat(s["time"]).astimezone(TZ).hour == 18
         ]
-        assert all(s["status"] == "active" for s in hour4_slots), "Should extend toward more expensive neighbor"
-        assert all(s["status"] == "standby" for s in hour6_slots), "Cheap hour 6 should not be activated"
+        assert all(s["status"] == "active" for s in hour16_slots), "Should consolidate toward more expensive neighbor"
+        assert all(s["status"] == "standby" for s in hour18_slots), "Cheap hour 18 should not be activated"
 
     def test_default_mode_is_cheapest(self, now, today_prices):
         """Without explicit selection_mode, behavior should match 'cheapest'."""
