@@ -595,6 +595,60 @@ def _enforce_min_consecutive(
         # All slots are in the past, nothing to consolidate
         return schedule
 
+    # Protect in-progress consecutive blocks:
+    # If active slots right before `now` haven't yet formed a complete
+    # consecutive block, extend them into the future. This prevents
+    # schedule recalculations from fragmenting blocks that are currently
+    # being executed.
+    trailing_past_active = 0
+    idx = future_start_idx - 1
+    while idx >= 0 and schedule[idx].get("status") == "active":
+        trailing_past_active += 1
+        idx -= 1
+
+    if trailing_past_active > 0 and trailing_past_active < effective_slots:
+        needed_extension = effective_slots - trailing_past_active
+        extended = 0
+        for i in range(
+            future_start_idx,
+            min(future_start_idx + needed_extension, future_end_idx),
+        ):
+            slot = schedule[i]
+            if slot.get("status") == "excluded":
+                _LOGGER.debug(
+                    "In-progress block extension stopped at excluded slot %s "
+                    "(past=%d, needed=%d, extended=%d)",
+                    slot.get("time"), trailing_past_active, needed_extension, extended,
+                )
+                break
+            # Respect price constraints
+            price = slot.get("price", 0)
+            if not inverted and always_expensive is not None and price >= always_expensive:
+                _LOGGER.debug(
+                    "In-progress block extension stopped: price %.3f >= always_expensive %.3f "
+                    "at %s (past=%d, needed=%d, extended=%d)",
+                    price, always_expensive, slot.get("time"),
+                    trailing_past_active, needed_extension, extended,
+                )
+                break
+            if inverted and always_cheap is not None and price <= always_cheap:
+                _LOGGER.debug(
+                    "In-progress block extension stopped: price %.3f <= always_cheap %.3f "
+                    "at %s (past=%d, needed=%d, extended=%d)",
+                    price, always_cheap, slot.get("time"),
+                    trailing_past_active, needed_extension, extended,
+                )
+                break
+            if slot.get("status") != "active":
+                slot["status"] = "active"
+                extended += 1
+        if extended > 0:
+            _LOGGER.debug(
+                "Protected in-progress block: extended %d past active slots "
+                "with %d future slots to meet min consecutive",
+                trailing_past_active, extended,
+            )
+
     blocks = _find_active_blocks(schedule)
     # Only consolidate blocks that are entirely in the future
     short_blocks = [
