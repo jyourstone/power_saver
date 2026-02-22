@@ -834,6 +834,130 @@ class TestMinConsecutiveHours:
         )
 
 
+    def test_in_progress_block_not_fragmented_on_recalculation(self):
+        """An in-progress consecutive block must not be split by recalculation.
+
+        Regression test for GitHub issue: user configures min_hours=1,
+        min_consecutive_hours=1, exclude 17:00-11:00. At 10:00, the scheduler
+        produces a clean consecutive block. When recalculated at 11:30
+        (mid-block), the block should be preserved, not fragmented.
+
+        The root cause: _enforce_min_consecutive only operates on future slots.
+        As slots become past, the future portion of the block becomes "short" and
+        gets freed/reallocated elsewhere, fragmenting the in-progress block.
+        """
+        # Prices from the actual user report: the 4 cheapest non-excluded
+        # slots are scattered (11:00=1.44, 11:15=1.56, 12:00=1.56, 13:15=1.57),
+        # NOT consecutive. The consecutive enforcement must consolidate them.
+        prices = [
+            # h0-h10: excluded range (17:00-11:00), prices don't matter much
+            *[make_nordpool_slot(h, 1.0 + h * 0.02, quarter=q)
+              for h in range(11) for q in range(4)],
+            # h11: 1.44, 1.56, 1.60, 1.60 (11:00 is cheapest in range)
+            make_nordpool_slot(11, 1.44, quarter=0),
+            make_nordpool_slot(11, 1.56, quarter=1),
+            make_nordpool_slot(11, 1.60, quarter=2),
+            make_nordpool_slot(11, 1.60, quarter=3),
+            # h12: 1.56, 1.60, 1.59, 1.58 (12:00 is 2nd cheapest)
+            make_nordpool_slot(12, 1.56, quarter=0),
+            make_nordpool_slot(12, 1.60, quarter=1),
+            make_nordpool_slot(12, 1.59, quarter=2),
+            make_nordpool_slot(12, 1.58, quarter=3),
+            # h13: 1.59, 1.57, 1.58, 1.59 (13:15 is 3rd cheapest)
+            make_nordpool_slot(13, 1.59, quarter=0),
+            make_nordpool_slot(13, 1.57, quarter=1),
+            make_nordpool_slot(13, 1.58, quarter=2),
+            make_nordpool_slot(13, 1.59, quarter=3),
+            # h14-h16: moderate prices
+            *[make_nordpool_slot(h, 1.60 + (h - 14) * 0.02, quarter=q)
+              for h in range(14, 17) for q in range(4)],
+            # h17-h23: excluded range again
+            *[make_nordpool_slot(h, 1.70 + (h - 17) * 0.02, quarter=q)
+              for h in range(17, 24) for q in range(4)],
+        ]
+
+        # --- Phase 1: Initial schedule at 10:00 ---
+        now_10 = datetime(2026, 2, 6, 10, 0, 0, tzinfo=TZ)
+
+        # Simulate activity from previous day (user has been running the
+        # integration for days). This satisfies the rolling window lookback
+        # so it won't add extra slots to compensate for "missing" past activity.
+        prev_history = [
+            (now_10 - timedelta(hours=20, minutes=i * 15)).isoformat()
+            for i in range(4)  # 4 slots = 1 hour of activity yesterday
+        ]
+
+        schedule_10 = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now_10,
+            rolling_window_hours=24.0,
+            prev_activity_history=prev_history,
+            min_consecutive_hours=1.0,
+            exclude_from="17:00:00",
+            exclude_until="11:00:00",
+        )
+
+        # Verify: at 10:00, we get a nice consecutive block starting at 11:00
+        future_blocks_10 = [
+            (start, length) for start, length in _find_active_blocks(schedule_10)
+            if datetime.fromisoformat(schedule_10[start]["time"]).astimezone(TZ) >= now_10
+        ]
+        assert len(future_blocks_10) >= 1, "Should have at least one future active block"
+        # The block should be at least 4 slots (1 hour)
+        assert future_blocks_10[0][1] >= 4, (
+            f"Initial block should be >= 4 slots but is {future_blocks_10[0][1]}"
+        )
+
+        # Build activity history as the coordinator would
+        history_at_1130 = build_activity_history(
+            schedule_10, prev_history, now_10, 24.0
+        )
+
+        # --- Phase 2: Recalculate at 11:30 (mid-block) ---
+        now_1130 = datetime(2026, 2, 6, 11, 30, 0, tzinfo=TZ)
+
+        # Update history: slots 11:00 and 11:15 have passed and were active
+        history_at_1130 = build_activity_history(
+            schedule_10, history_at_1130, now_1130, 24.0
+        )
+
+        schedule_1130 = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now_1130,
+            rolling_window_hours=24.0,
+            prev_activity_history=history_at_1130,
+            min_consecutive_hours=1.0,
+            exclude_from="17:00:00",
+            exclude_until="11:00:00",
+        )
+
+        # The critical check: at 11:30, the current slot should be ACTIVE
+        # (the in-progress block should continue)
+        current_slot = find_current_slot(schedule_1130, now_1130)
+        assert current_slot is not None, "Should find current slot at 11:30"
+        assert current_slot["status"] == "active", (
+            f"Current slot at 11:30 should be active (in-progress block) "
+            f"but is '{current_slot['status']}'. The consecutive block was fragmented."
+        )
+
+        # Also verify: the block containing 11:00-11:45 should still be consecutive
+        # (11:00 and 11:15 are past-active, 11:30 and 11:45 should be future-active)
+        slot_1145 = next(
+            (s for s in schedule_1130
+             if "11:45" in s["time"] and "2026-02-06" in s["time"]),
+            None,
+        )
+        assert slot_1145 is not None, "Should find 11:45 slot"
+        assert slot_1145["status"] == "active", (
+            f"Slot at 11:45 should be active to maintain consecutive block "
+            f"but is '{slot_1145['status']}'"
+        )
+
+
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
 
