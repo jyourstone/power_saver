@@ -615,12 +615,29 @@ def _enforce_min_consecutive(
         ):
             slot = schedule[i]
             if slot.get("status") == "excluded":
+                _LOGGER.debug(
+                    "In-progress block extension stopped at excluded slot %s "
+                    "(past=%d, needed=%d, extended=%d)",
+                    slot.get("time"), trailing_past_active, needed_extension, extended,
+                )
                 break
             # Respect price constraints
             price = slot.get("price", 0)
             if not inverted and always_expensive is not None and price >= always_expensive:
+                _LOGGER.debug(
+                    "In-progress block extension stopped: price %.3f >= always_expensive %.3f "
+                    "at %s (past=%d, needed=%d, extended=%d)",
+                    price, always_expensive, slot.get("time"),
+                    trailing_past_active, needed_extension, extended,
+                )
                 break
             if inverted and always_cheap is not None and price <= always_cheap:
+                _LOGGER.debug(
+                    "In-progress block extension stopped: price %.3f <= always_cheap %.3f "
+                    "at %s (past=%d, needed=%d, extended=%d)",
+                    price, always_cheap, slot.get("time"),
+                    trailing_past_active, needed_extension, extended,
+                )
                 break
             if slot.get("status") != "active":
                 slot["status"] = "active"

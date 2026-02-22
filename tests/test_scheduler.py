@@ -911,7 +911,7 @@ class TestMinConsecutiveHours:
         )
 
         # Build activity history as the coordinator would
-        history_at_1130 = build_activity_history(
+        history_after_phase1 = build_activity_history(
             schedule_10, prev_history, now_10, 24.0
         )
 
@@ -920,7 +920,7 @@ class TestMinConsecutiveHours:
 
         # Update history: slots 11:00 and 11:15 have passed and were active
         history_at_1130 = build_activity_history(
-            schedule_10, history_at_1130, now_1130, 24.0
+            schedule_10, history_after_phase1, now_1130, 24.0
         )
 
         schedule_1130 = build_schedule(
