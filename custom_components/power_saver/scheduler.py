@@ -298,6 +298,7 @@ def build_schedule(
             schedule, min_consecutive_hours, min_hours, always_expensive,
             now=now, rolling_window_hours=rolling_window_hours,
             inverted=inverted, always_cheap=always_cheap,
+            prev_activity_history=prev_activity_history,
         )
 
     # Log statistics
@@ -539,6 +540,7 @@ def _enforce_min_consecutive(
     rolling_window_hours: float = 24.0,
     inverted: bool = False,
     always_cheap: float | None = None,
+    prev_activity_history: list[str] | None = None,
 ) -> list[dict]:
     """Ensure all future active blocks are at least min_consecutive_hours long.
 
@@ -559,6 +561,10 @@ def _enforce_min_consecutive(
         rolling_window_hours: Rolling window size, limits how far candidates can be.
         inverted: If True, use inverted selection logic.
         always_cheap: Price threshold; in inverted mode, slots at/below are never activated.
+        prev_activity_history: Previously active slot timestamps. Used to detect
+            in-progress blocks even when prior slots are marked standby in the
+            current base schedule (they were active in the previous scheduler run
+            but are not in the cheapest-N selection of the current run).
 
     Returns:
         The modified schedule.
@@ -600,11 +606,29 @@ def _enforce_min_consecutive(
     # consecutive block, extend them into the future. This prevents
     # schedule recalculations from fragmenting blocks that are currently
     # being executed.
+    #
+    # We count trailing past active slots using BOTH the current schedule
+    # status AND the activity history. A past slot that is "standby" in the
+    # current base schedule (because it fell out of the cheapest-N selection
+    # when prices are re-evaluated) but WAS active in the previous run
+    # (recorded in activity history) still counts as part of the in-progress
+    # block. Without this, the trailing chain breaks as soon as a past slot
+    # drops out of the base selection, and the protection fails.
+    activity_set: set[str] = set(prev_activity_history or [])
     trailing_past_active = 0
     idx = future_start_idx - 1
-    while idx >= 0 and schedule[idx].get("status") == "active":
-        trailing_past_active += 1
-        idx -= 1
+    while idx >= 0:
+        slot = schedule[idx]
+        slot_status = slot.get("status")
+        # Excluded slots always break the chain
+        if slot_status == "excluded":
+            break
+        # Count as trailing if active in current schedule OR was active in history
+        if slot_status == "active" or slot["time"] in activity_set:
+            trailing_past_active += 1
+            idx -= 1
+        else:
+            break
 
     if trailing_past_active > 0 and trailing_past_active < effective_slots:
         needed_extension = effective_slots - trailing_past_active
@@ -650,12 +674,23 @@ def _enforce_min_consecutive(
             )
 
     blocks = _find_active_blocks(schedule)
-    # Only consolidate blocks that are entirely in the future
+    # Only consolidate blocks that are entirely in the future.
+    # Also protect the block immediately at future_start_idx if it is the
+    # logical continuation of an in-progress block: when trailing past-active
+    # slots already exist but haven't reached effective_slots, and this block
+    # would together with those past slots form a complete consecutive block,
+    # don't free it — freeing it would turn the heater off mid-cycle.
     short_blocks = [
         (start, length) for start, length in blocks
         if length < effective_slots
         and start >= future_start_idx
         and start + length <= future_end_idx
+        and not (
+            start == future_start_idx
+            and trailing_past_active > 0
+            and trailing_past_active < effective_slots
+            and trailing_past_active + length >= effective_slots
+        )
     ]
 
     if not short_blocks:

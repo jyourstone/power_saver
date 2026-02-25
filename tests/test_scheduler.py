@@ -957,6 +957,39 @@ class TestMinConsecutiveHours:
             f"but is '{slot_1145['status']}'"
         )
 
+        # --- Phase 3: Recalculate at 11:45 (last slot of block) ---
+        # This is the critical regression scenario: at 11:45, the 11:30 slot is
+        # now in the past and shows as "standby" in the base selection (because the
+        # cheapest-4 slots are 11:00, 11:15, 12:00, 13:15). Without the history-aware
+        # trailing detection and in-progress block protection, trailing_past_active=0
+        # and the block is freed, turning the heater off at 11:45.
+        now_1145 = datetime(2026, 2, 6, 11, 45, 0, tzinfo=TZ)
+
+        history_at_1145 = build_activity_history(
+            schedule_1130, history_at_1130, now_1145, 24.0
+        )
+
+        schedule_1145 = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now_1145,
+            rolling_window_hours=24.0,
+            prev_activity_history=history_at_1145,
+            min_consecutive_hours=1.0,
+            exclude_from="17:00:00",
+            exclude_until="11:00:00",
+        )
+
+        # The critical check: at 11:45, the current slot should be ACTIVE
+        current_slot_1145 = find_current_slot(schedule_1145, now_1145)
+        assert current_slot_1145 is not None, "Should find current slot at 11:45"
+        assert current_slot_1145["status"] == "active", (
+            f"Current slot at 11:45 should be active (final slot of in-progress block) "
+            f"but is '{current_slot_1145['status']}'. "
+            f"The consecutive block was fragmented at the last slot."
+        )
+
 
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
