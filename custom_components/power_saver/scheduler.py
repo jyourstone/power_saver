@@ -630,6 +630,38 @@ def _enforce_min_consecutive(
         else:
             break
 
+    # If we exhausted the schedule backwards (idx < 0), also scan activity
+    # history for active slots immediately before the schedule start. This
+    # handles the midnight day-rollover boundary: at 00:00 the new schedule
+    # only contains today's data (starts at 00:00), so yesterday's active
+    # slots (23:45, 23:30, …) cannot be found in the schedule at all —
+    # they live exclusively in history. Without this check, trailing_past_active
+    # stays 0 at midnight and the in-progress block protection never fires.
+    if idx < 0 and schedule and trailing_past_active < effective_slots:
+        schedule_start = datetime.fromisoformat(
+            schedule[0]["time"]
+        ).astimezone(now.tzinfo)
+        slot_interval = timedelta(minutes=15)
+        history_datetimes = {
+            datetime.fromisoformat(t).astimezone(now.tzinfo)
+            for t in activity_set
+            if datetime.fromisoformat(t).astimezone(now.tzinfo) < schedule_start
+        }
+        k = 1
+        while trailing_past_active < effective_slots:
+            expected = schedule_start - k * slot_interval
+            if expected in history_datetimes:
+                trailing_past_active += 1
+                k += 1
+            else:
+                break
+
+    _LOGGER.debug(
+        "In-progress block detection: trailing_past_active=%d, effective_slots=%d, "
+        "future_start_idx=%d, history_size=%d",
+        trailing_past_active, effective_slots, future_start_idx,
+        len(prev_activity_history) if prev_activity_history else 0,
+    )
     if trailing_past_active > 0 and trailing_past_active < effective_slots:
         needed_extension = effective_slots - trailing_past_active
         extended = 0

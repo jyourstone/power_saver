@@ -990,6 +990,65 @@ class TestMinConsecutiveHours:
             f"The consecutive block was fragmented at the last slot."
         )
 
+    def test_in_progress_block_survives_midnight_day_rollover(self):
+        """In-progress block must not be broken at midnight when the day rolls over.
+
+        Regression test: at 00:00 the scheduler switches to the new day's raw_today
+        data (which starts at 00:00). The schedule therefore has no past slots, so
+        future_start_idx == 0 and the trailing loop exits immediately with
+        trailing_past_active == 0. Without Fix C, no protection fires and the
+        in-progress block (started at 23:30/23:45 the previous evening) is lost.
+
+        Fix C extends the trailing detection to scan prev_activity_history for
+        consecutive active slots immediately before the schedule start, bridging
+        the day boundary.
+        """
+        # Build a Feb 7 price set where the 4 cheapest slots are in the
+        # afternoon (13:00-13:45), NOT at midnight, so the base selection
+        # never activates 00:00-00:45. The protection must supply those slots.
+        today_feb7 = [
+            # Midnight through morning: moderate prices — not cheapest
+            *[make_nordpool_slot(h, 0.85 + h * 0.01, day_offset=1, quarter=q)
+              for h in range(12) for q in range(4)],
+            # 13:00-13:45: cheapest 4 slots
+            make_nordpool_slot(13, 0.60, day_offset=1, quarter=0),
+            make_nordpool_slot(13, 0.61, day_offset=1, quarter=1),
+            make_nordpool_slot(13, 0.62, day_offset=1, quarter=2),
+            make_nordpool_slot(13, 0.63, day_offset=1, quarter=3),
+            # Rest of day: moderate/expensive
+            *[make_nordpool_slot(h, 0.80 + h * 0.01, day_offset=1, quarter=q)
+              for h in range(14, 24) for q in range(4)],
+        ]
+
+        # History: the heater was active at 23:30 and 23:45 on Feb 6.
+        # This simulates an in-progress 1-hour block that started at 23:15
+        # and should run through 00:15 on Feb 7.
+        feb6_2330 = datetime(2026, 2, 6, 23, 30, 0, tzinfo=TZ).isoformat()
+        feb6_2345 = datetime(2026, 2, 6, 23, 45, 0, tzinfo=TZ).isoformat()
+        history_at_midnight = [feb6_2330, feb6_2345]
+
+        now_midnight = datetime(2026, 2, 7, 0, 0, 0, tzinfo=TZ)
+
+        schedule_midnight = build_schedule(
+            raw_today=today_feb7,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now_midnight,
+            rolling_window_hours=24.0,
+            prev_activity_history=history_at_midnight,
+            min_consecutive_hours=1.0,
+        )
+
+        # The current slot (00:00 Feb 7) must remain active — it's part of the
+        # in-progress block that started at 23:30 on Feb 6.
+        current_slot = find_current_slot(schedule_midnight, now_midnight)
+        assert current_slot is not None, "Should find current slot at midnight"
+        assert current_slot["status"] == "active", (
+            f"Slot at 00:00 should be active (continuing in-progress block from "
+            f"previous day) but is '{current_slot['status']}'. "
+            f"The midnight day-rollover broke the consecutive block."
+        )
+
 
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
