@@ -767,8 +767,11 @@ def _enforce_min_consecutive(
             1 for i in range(win_start, win_start + effective_slots)
             if schedule[i].get("status") == "standby"
         )
-        if new_needed > freed:
-            continue  # Not enough budget for this window
+        # Note: we intentionally allow new_needed > freed here. When freed < effective_slots,
+        # no window could ever satisfy new_needed <= freed (since new_needed == effective_slots
+        # when all future slots are standby), leaving freed slots permanently deactivated.
+        # It's better to activate a full consecutive block (possibly adding a few net-new slots)
+        # than to leave the schedule with fewer active slots than before consolidation.
 
         for i in range(win_start, win_start + effective_slots):
             if schedule[i].get("status") == "standby":

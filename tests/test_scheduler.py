@@ -1049,6 +1049,104 @@ class TestMinConsecutiveHours:
             f"The midnight day-rollover broke the consecutive block."
         )
 
+    def test_consolidation_when_freed_less_than_effective_slots(self):
+        """Isolated short blocks must consolidate even when freed < effective_slots.
+
+        Regression test for a budget-check bug in the consecutive enforcement
+        consolidation loop:
+
+        With min_hours=1h (4 slots) and min_consecutive_hours=1h (effective_slots=4),
+        the base selection can pick 4 isolated 1-slot cheap blocks scattered across the
+        day (e.g. 3:00, 7:00, 15:00, 20:00).  By mid-day (now=12:00):
+          - 3:00 and 7:00 are in the past — trailing_past_active=0 (heater is not
+            currently running so no in-progress protection applies)
+          - 15:00 and 20:00 are two isolated future 1-slot blocks
+          - Both get freed: freed=2
+
+        The consolidation loop then looks for a 4-slot consecutive window.  Every
+        candidate window is all-standby, so new_needed=4.  The old budget check
+        ``if new_needed > freed: continue`` skips ALL candidates (4 > 2), leaving
+        the 2 freed slots permanently deactivated — the heater ends up with
+        0 future active slots and never runs for the rest of the day.
+
+        The fix removes that budget check so the cheapest 4-slot window (13:00-13:45)
+        is activated regardless of freed, and ``freed`` simply goes negative to stop
+        further windows from being activated.
+
+        Setup:
+          - Prices: 4 isolated cheap slots at 3:00, 7:00, 15:00, 20:00 (quarter=0,
+            price=0.55).  All other slots at 1.0+.
+          - Cheap consecutive block at 13:00-13:45 (price=0.70) — cheaper than
+            the scattered slots' surrounding hours but more expensive than 0.55, so
+            the base selection picks the scattered slots, not this block.
+          - History: heater ran 1:00-1:45 (4 slots) → past_active_count=6, which
+            prevents the rolling window's "critical activation" path from firing and
+            adding extra future slots that would mask the bug.
+        """
+        prices = [
+            make_nordpool_slot(h, 1.0 + h * 0.01, quarter=q)
+            for h in range(24) for q in range(4)
+        ]
+        # 4 isolated cheap scattered slots — these become the base-selected slots
+        for h in [3, 7, 15, 20]:
+            prices[h * 4] = make_nordpool_slot(h, 0.55, quarter=0)
+        # Cheap consecutive block at 13:00-13:45 — the consolidation target
+        for q in range(4):
+            prices[13 * 4 + q] = make_nordpool_slot(13, 0.70, quarter=q)
+
+        # History: heater ran 1:00-1:45 today, providing past_active_count=6
+        # (2 from past base slots 3:00, 7:00 + 4 from history = 6 >= min_slots=4).
+        # This keeps the rolling window in "sufficient" mode, so it does NOT
+        # add extra future slots that would push freed up to effective_slots=4.
+        history = [
+            datetime(2026, 2, 6, 1,  0, tzinfo=TZ).isoformat(),
+            datetime(2026, 2, 6, 1, 15, tzinfo=TZ).isoformat(),
+            datetime(2026, 2, 6, 1, 30, tzinfo=TZ).isoformat(),
+            datetime(2026, 2, 6, 1, 45, tzinfo=TZ).isoformat(),
+        ]
+
+        now = datetime(2026, 2, 6, 12, 0, 0, tzinfo=TZ)
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now,
+            rolling_window_hours=24.0,
+            prev_activity_history=history,
+            min_consecutive_hours=1.0,
+        )
+
+        future_active = [
+            s for s in schedule
+            if s.get("status") == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) >= now
+        ]
+        assert len(future_active) >= 4, (
+            f"Expected >=4 future active slots after consolidation but got "
+            f"{len(future_active)}: {[s['time'] for s in future_active]}. "
+            f"The 2 freed slots were not placed because new_needed (4) > freed (2)."
+        )
+
+        # The future active slots must form at least one 4-slot consecutive block
+        active_times = sorted(
+            datetime.fromisoformat(s["time"]).astimezone(TZ) for s in future_active
+        )
+        has_consecutive_block = any(
+            active_times[i + 3] - active_times[i] == timedelta(minutes=45)
+            for i in range(len(active_times) - 3)
+        )
+        assert has_consecutive_block, (
+            f"Expected at least one consecutive 4-slot block in future active slots, "
+            f"got: {[t.strftime('%H:%M') for t in active_times]}"
+        )
+
+        # Specifically: the cheapest future block (13:00-13:45) should be activated
+        future_times = {t.strftime("%H:%M") for t in active_times}
+        assert {"13:00", "13:15", "13:30", "13:45"}.issubset(future_times), (
+            f"Expected 13:00-13:45 to be the consolidation target, "
+            f"got: {sorted(future_times)}"
+        )
+
 
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
