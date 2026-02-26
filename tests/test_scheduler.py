@@ -1147,6 +1147,90 @@ class TestMinConsecutiveHours:
             f"got: {sorted(future_times)}"
         )
 
+        # Exactly 1 consecutive block should be activated — NOT 2.
+        # When freed=2 and effective_slots=4, the budget bypass applies only to the
+        # FIRST window. After that window is placed (slots_activated > 0), the budget
+        # check kicks back in: new_needed=4 > freed=-2, so subsequent windows are
+        # skipped. This prevents the over-activation regression where removing the
+        # check entirely caused 2 windows (8 slots) to fire when freed < effective_slots.
+        assert len(future_active) == 4, (
+            f"Expected exactly 4 future active slots (1 consecutive block), "
+            f"got {len(future_active)}: {[t.strftime('%H:%M') for t in active_times]}. "
+            f"Over-activation: budget check not applied after first window."
+        )
+
+    def test_consolidation_does_not_over_activate_when_freed_geq_effective_slots(self):
+        """When freed >= effective_slots the budget check must still cap at 1 window.
+
+        Regression guard for the over-activation introduced when the budget check
+        was removed entirely: with freed=6 and effective_slots=4, removing the check
+        caused 2 consecutive windows (8 slots) to be activated instead of 1 (4 slots).
+
+        The fix allows bypassing the check only for the first window (slots_activated==0).
+        After the first window fires, new_needed=4 > freed=2 causes subsequent windows
+        to be skipped.
+
+        Setup mirrors the real-world log scenario:
+          - Base: 4 cheap scattered slots (3 past, 1 future)
+          - Rolling window activates 5 extra future slots → 6 future active total
+          - Consecutive enforcement frees all 6 from 3 short blocks (freed=6)
+          - Should consolidate into exactly 1 block of 4, not 2 blocks of 4
+        """
+        prices = [
+            make_nordpool_slot(h, 1.0 + h * 0.01, quarter=q)
+            for h in range(24) for q in range(4)
+        ]
+        # Base cheapest 4: scattered isolated slots (hours 1, 5, 9, 22 quarter=0)
+        for h in [1, 5, 9, 22]:
+            prices[h * 4] = make_nordpool_slot(h, 0.50, quarter=0)
+        # Cheap consecutive target at 13:00-13:45
+        for q in range(4):
+            prices[13 * 4 + q] = make_nordpool_slot(13, 0.60, quarter=q)
+        # Second cheap consecutive block at 16:00-16:45 (slightly more expensive)
+        for q in range(4):
+            prices[16 * 4 + q] = make_nordpool_slot(16, 0.65, quarter=q)
+
+        # No history — rolling window critical activation will add extra future slots
+        # to cover the constraint, creating freed=6 scattered short blocks.
+        now = datetime(2026, 2, 6, 10, 0, 0, tzinfo=TZ)
+        schedule = build_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now,
+            rolling_window_hours=24.0,
+            prev_activity_history=[],
+            min_consecutive_hours=1.0,
+        )
+
+        future_active = [
+            s for s in schedule
+            if s.get("status") == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) >= now
+        ]
+        active_times = sorted(
+            datetime.fromisoformat(s["time"]).astimezone(TZ) for s in future_active
+        )
+
+        # Must have at least one consecutive 4-slot block
+        has_consecutive_block = any(
+            active_times[i + 3] - active_times[i] == timedelta(minutes=45)
+            for i in range(len(active_times) - 3)
+        )
+        assert has_consecutive_block, (
+            f"Expected a consecutive 4-slot block, "
+            f"got: {[t.strftime('%H:%M') for t in active_times]}"
+        )
+
+        # Total active hours must stay close to min_hours (1h = 4 slots).
+        # Allow some overshoot from rolling window activations, but NOT the
+        # 2× overshoot (8 future slots = 2h) caused by the removed budget check.
+        assert len(future_active) <= 8, (
+            f"Over-activation: expected <=8 future active slots, "
+            f"got {len(future_active)}: {[t.strftime('%H:%M') for t in active_times]}. "
+            f"The budget check was not applied after the first window."
+        )
+
 
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""
