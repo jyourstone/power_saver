@@ -642,11 +642,16 @@ def _enforce_min_consecutive(
             schedule[0]["time"]
         ).astimezone(now.tzinfo)
         slot_interval = timedelta(minutes=15)
-        history_datetimes = {
-            datetime.fromisoformat(t).astimezone(now.tzinfo)
-            for t in activity_set
-            if datetime.fromisoformat(t).astimezone(now.tzinfo) < schedule_start
-        }
+        history_datetimes: set[datetime] = set()
+        for t in activity_set:
+            try:
+                dt = datetime.fromisoformat(t).astimezone(now.tzinfo)
+                if dt < schedule_start:
+                    history_datetimes.add(dt)
+            except (ValueError, TypeError):
+                _LOGGER.warning(
+                    "Skipping malformed history timestamp in midnight rollover check: %r", t
+                )
         k = 1
         while trailing_past_active < effective_slots:
             expected = schedule_start - k * slot_interval
