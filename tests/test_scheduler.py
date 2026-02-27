@@ -1641,3 +1641,484 @@ class TestExcludedHours:
         # Non-excluded slots should still have some active ones
         active = [s for s in schedule if s["status"] == "active"]
         assert len(active) > 0
+
+
+apply_committed_block_protection = scheduler.apply_committed_block_protection
+
+
+class TestCommittedBlockProtection:
+    """Tests for the apply_committed_block_protection function.
+
+    This function guarantees that once an appliance turns on, it stays
+    active for the full min_consecutive_hours duration, even if the
+    schedule is recalculated mid-block.
+    """
+
+    def test_block_starts_when_state_becomes_active(self, now):
+        """When scheduler says active and no block exists, start one."""
+        state, block_start = apply_committed_block_protection(
+            current_state="active",
+            active_block_start=None,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "active", "price": 0.10},
+        )
+        assert state == "active"
+        assert block_start == now
+
+    def test_block_continues_when_already_active(self, now):
+        """When scheduler says active and block exists, keep existing start."""
+        earlier = now - timedelta(minutes=30)
+        state, block_start = apply_committed_block_protection(
+            current_state="active",
+            active_block_start=earlier,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "active", "price": 0.10},
+        )
+        assert state == "active"
+        assert block_start == earlier
+
+    def test_block_overrides_standby_within_duration(self, now):
+        """When scheduler says standby but within committed duration, override to active."""
+        block_start = now - timedelta(minutes=30)  # 30 min into 1h block
+        slot = {"status": "standby", "price": 0.10}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot,
+        )
+        assert state == "active"
+        assert new_block_start == block_start
+        # Slot should be updated in-place
+        assert slot["status"] == "active"
+
+    def test_block_completes_after_full_duration(self, now):
+        """When committed duration has passed, allow scheduler state through."""
+        block_start = now - timedelta(hours=1)  # 1h block, exactly done
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_block_completes_after_exceeded_duration(self, now):
+        """When well past committed duration, allow scheduler state through."""
+        block_start = now - timedelta(hours=2)  # 2h past for a 1h block
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_excluded_slot_ends_block_immediately(self, now):
+        """Excluded slots always end the committed block."""
+        block_start = now - timedelta(minutes=15)  # Only 15 min into 1h block
+        state, new_block_start = apply_committed_block_protection(
+            current_state="excluded",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "excluded", "price": 0.10},
+        )
+        assert state == "excluded"
+        assert new_block_start is None
+
+    def test_always_expensive_ends_block_early(self, now):
+        """In cheapest mode, always_expensive threshold ends block."""
+        block_start = now - timedelta(minutes=15)
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.60,
+            always_expensive=0.50,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.60},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_always_expensive_at_exact_threshold(self, now):
+        """Price exactly at always_expensive threshold ends block."""
+        block_start = now - timedelta(minutes=15)
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.50,
+            always_expensive=0.50,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.50},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_always_expensive_below_threshold_keeps_block(self, now):
+        """Price below always_expensive keeps block active."""
+        block_start = now - timedelta(minutes=15)
+        slot = {"status": "standby", "price": 0.40}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.40,
+            always_expensive=0.50,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot,
+        )
+        assert state == "active"
+        assert new_block_start == block_start
+
+    def test_inverted_always_cheap_ends_block_early(self, now):
+        """In most_expensive mode, always_cheap threshold ends block."""
+        block_start = now - timedelta(minutes=15)
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.03,
+            always_expensive=None,
+            always_cheap=0.05,
+            inverted=True,
+            current_slot={"status": "standby", "price": 0.03},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_inverted_always_cheap_at_exact_threshold(self, now):
+        """In inverted mode, price at always_cheap threshold ends block."""
+        block_start = now - timedelta(minutes=15)
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.05,
+            always_expensive=None,
+            always_cheap=0.05,
+            inverted=True,
+            current_slot={"status": "standby", "price": 0.05},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_inverted_always_cheap_above_threshold_keeps_block(self, now):
+        """In inverted mode, price above always_cheap keeps block active."""
+        block_start = now - timedelta(minutes=15)
+        slot = {"status": "standby", "price": 0.10}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=0.05,
+            inverted=True,
+            current_slot=slot,
+        )
+        assert state == "active"
+        assert new_block_start == block_start
+
+    def test_disabled_when_zero_hours(self, now):
+        """When effective_consecutive_hours is 0, no protection applied."""
+        state, block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=None,
+            now=now,
+            effective_consecutive_hours=0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state == "standby"
+        assert block_start is None
+
+    def test_disabled_clears_existing_block(self, now):
+        """When disabled, any existing block start is cleared."""
+        block_start = now - timedelta(minutes=15)
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state == "standby"
+        assert new_block_start is None
+
+    def test_no_block_start_standby_passes_through(self, now):
+        """When no block exists and state is standby, pass through."""
+        state, block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=None,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state == "standby"
+        assert block_start is None
+
+    def test_none_price_does_not_trigger_constraints(self, now):
+        """When current_price is None, price constraints are not triggered."""
+        block_start = now - timedelta(minutes=15)
+        slot = {"status": "standby", "price": None}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=None,
+            always_expensive=0.50,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot,
+        )
+        assert state == "active"
+        assert new_block_start == block_start
+
+    def test_half_hour_block(self, now):
+        """0.5h (30 min) block works correctly — 2 slots."""
+        block_start = now - timedelta(minutes=15)  # 15 min into 30 min block
+        slot = {"status": "standby", "price": 0.10}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=0.5,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot,
+        )
+        assert state == "active"
+        assert new_block_start == block_start
+
+        # At 30 min mark: block should be done
+        now_30 = block_start + timedelta(minutes=30)
+        state2, block2 = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now_30,
+            effective_consecutive_hours=0.5,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state2 == "standby"
+        assert block2 is None
+
+    def test_slot_modified_in_place(self, now):
+        """The current_slot dict is updated to active when block overrides."""
+        block_start = now - timedelta(minutes=15)
+        slot = {"status": "standby", "time": now.isoformat(), "price": 0.10}
+        apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot,
+        )
+        assert slot["status"] == "active"
+
+    def test_none_slot_handled_gracefully(self, now):
+        """When current_slot is None, override still works without crash."""
+        block_start = now - timedelta(minutes=15)
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=None,
+        )
+        assert state == "active"
+        assert new_block_start == block_start
+
+    def test_multi_schedule_cycle_scenario(self, now):
+        """Simulate multiple 15-min schedule rebuilds within a committed block."""
+        # Cycle 1: Scheduler says active → block starts
+        t0 = now.replace(minute=0, second=0, microsecond=0)
+        state, block = apply_committed_block_protection(
+            current_state="active",
+            active_block_start=None,
+            now=t0,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "active", "price": 0.10},
+        )
+        assert state == "active"
+        assert block == t0
+
+        # Cycle 2 (+15 min): Scheduler says standby → block overrides
+        t1 = t0 + timedelta(minutes=15)
+        slot2 = {"status": "standby", "price": 0.10}
+        state, block = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block,
+            now=t1,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot2,
+        )
+        assert state == "active"
+        assert block == t0
+        assert slot2["status"] == "active"
+
+        # Cycle 3 (+30 min): Scheduler says standby → block overrides
+        t2 = t0 + timedelta(minutes=30)
+        slot3 = {"status": "standby", "price": 0.10}
+        state, block = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block,
+            now=t2,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot3,
+        )
+        assert state == "active"
+        assert block == t0
+        assert slot3["status"] == "active"
+
+        # Cycle 4 (+45 min): Scheduler says standby → block overrides
+        t3 = t0 + timedelta(minutes=45)
+        slot4 = {"status": "standby", "price": 0.10}
+        state, block = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block,
+            now=t3,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot=slot4,
+        )
+        assert state == "active"
+        assert block == t0
+        assert slot4["status"] == "active"
+
+        # Cycle 5 (+60 min): Block is done, standby passes through
+        t4 = t0 + timedelta(minutes=60)
+        state, block = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block,
+            now=t4,
+            effective_consecutive_hours=1.0,
+            current_price=0.10,
+            always_expensive=None,
+            always_cheap=None,
+            inverted=False,
+            current_slot={"status": "standby", "price": 0.10},
+        )
+        assert state == "standby"
+        assert block is None
+
+    def test_always_expensive_not_checked_in_inverted_mode(self, now):
+        """In inverted mode, always_expensive is ignored for block protection."""
+        block_start = now - timedelta(minutes=15)
+        slot = {"status": "standby", "price": 0.60}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.60,
+            always_expensive=0.50,  # Would trigger in cheapest mode
+            always_cheap=None,
+            inverted=True,  # But we're in inverted mode
+            current_slot=slot,
+        )
+        # Block should remain active since always_expensive is ignored in inverted mode
+        assert state == "active"
+        assert new_block_start == block_start
+
+    def test_always_cheap_not_checked_in_normal_mode(self, now):
+        """In cheapest mode, always_cheap is ignored for block protection."""
+        block_start = now - timedelta(minutes=15)
+        slot = {"status": "standby", "price": 0.03}
+        state, new_block_start = apply_committed_block_protection(
+            current_state="standby",
+            active_block_start=block_start,
+            now=now,
+            effective_consecutive_hours=1.0,
+            current_price=0.03,
+            always_expensive=None,
+            always_cheap=0.05,  # Would trigger in inverted mode
+            inverted=False,  # But we're in normal mode
+            current_slot=slot,
+        )
+        # Block should remain active since always_cheap is ignored in normal mode
+        assert state == "active"
+        assert new_block_start == block_start

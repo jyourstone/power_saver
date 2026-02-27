@@ -86,6 +86,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._previous_state: str | None = None
         self._force_on: bool = False
         self._force_off: bool = False
+        self._active_block_start: datetime | None = None
 
     @property
     def force_on_active(self) -> bool:
@@ -230,6 +231,31 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             current_state = STATE_STANDBY
             current_price = None
 
+        # Committed block protection: once the appliance turns on, keep it
+        # active for the full min_consecutive_hours to prevent 15-minute
+        # schedule recalculations from fragmenting consecutive blocks.
+        effective_consecutive = (
+            min(min_consecutive_hours, min_hours)
+            if min_consecutive_hours
+            else 0
+        )
+        if not self._force_off and not self._force_on:
+            current_state, self._active_block_start = (
+                scheduler.apply_committed_block_protection(
+                    current_state=current_state,
+                    active_block_start=self._active_block_start,
+                    now=now,
+                    effective_consecutive_hours=effective_consecutive,
+                    current_price=current_price,
+                    always_expensive=always_expensive,
+                    always_cheap=always_cheap,
+                    inverted=selection_mode == "most_expensive",
+                    current_slot=current_slot,
+                )
+            )
+        elif self._active_block_start is not None:
+            self._active_block_start = None
+
         # Find next state change
         next_change = scheduler.find_next_change(schedule, current_slot, now)
 
@@ -319,6 +345,19 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 )
             else:
                 _LOGGER.debug("No previous activity history found in storage")
+            # Restore committed block start time
+            block_start_iso = data.get("active_block_start") if data else None
+            if block_start_iso:
+                try:
+                    self._active_block_start = datetime.fromisoformat(
+                        block_start_iso
+                    )
+                    _LOGGER.info(
+                        "Restored committed block start: %s",
+                        block_start_iso,
+                    )
+                except (ValueError, TypeError):
+                    self._active_block_start = None
         except Exception:
             _LOGGER.exception("Failed to load activity history from storage")
 
@@ -326,7 +365,14 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         """Save activity history to persistent storage."""
         try:
             await self._store.async_save(
-                {"activity_history": self._activity_history}
+                {
+                    "activity_history": self._activity_history,
+                    "active_block_start": (
+                        self._active_block_start.isoformat()
+                        if self._active_block_start
+                        else None
+                    ),
+                }
             )
         except Exception:
             _LOGGER.exception("Failed to save activity history to storage")

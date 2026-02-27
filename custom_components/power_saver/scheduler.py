@@ -424,7 +424,6 @@ def _apply_rolling_window_constraint(
     # Fallback strategy when not enough future slots for a full window
     if len(future_schedule) < window_slots:
         available_hours = len(future_schedule) / 4.0
-        hours_that_will_age_out = min(available_hours, window_hours)
 
         aging_out_cutoff = now + timedelta(hours=available_hours) - timedelta(hours=window_hours)
 
@@ -966,3 +965,111 @@ def build_activity_history(
     activity_history.sort()
 
     return activity_history
+
+
+def apply_committed_block_protection(
+    current_state: str,
+    active_block_start: datetime | None,
+    now: datetime,
+    effective_consecutive_hours: float,
+    current_price: float | None,
+    always_expensive: float | None,
+    always_cheap: float | None,
+    inverted: bool,
+    current_slot: dict | None,
+) -> tuple[str, datetime | None]:
+    """Ensure an appliance stays active for the full min_consecutive_hours.
+
+    Once an appliance turns on, this function guarantees it remains active for
+    the committed duration to prevent 15-minute schedule recalculations from
+    fragmenting consecutive blocks.
+
+    Args:
+        current_state: Current slot state ("active", "standby", "excluded").
+        active_block_start: When the current committed block started, or None.
+        now: Current datetime (timezone-aware).
+        effective_consecutive_hours: min(min_consecutive_hours, min_hours).
+            Pass 0 if feature is disabled.
+        current_price: Price of the current slot.
+        always_expensive: Always-expensive price threshold (cheapest mode).
+        always_cheap: Always-cheap price threshold (most_expensive mode).
+        inverted: True when selection_mode is "most_expensive".
+        current_slot: Current schedule slot dict (modified in-place if
+            state is overridden).
+
+    Returns:
+        (new_current_state, new_active_block_start) tuple.
+    """
+    if effective_consecutive_hours <= 0:
+        return current_state, None
+
+    if current_state == "active":
+        if active_block_start is None:
+            # New committed block starts now
+            active_block_start = now
+            _LOGGER.debug(
+                "Committed block started at %s (duration: %.1fh)",
+                now.isoformat(),
+                effective_consecutive_hours,
+            )
+        return current_state, active_block_start
+
+    # State is not active — check if we're within a committed block
+    if active_block_start is None:
+        return current_state, None
+
+    # Excluded slots always end a committed block immediately
+    if current_state == "excluded":
+        _LOGGER.info(
+            "Committed block ended: slot is excluded (started %s)",
+            active_block_start.isoformat(),
+        )
+        return current_state, None
+
+    committed_end = active_block_start + timedelta(
+        hours=effective_consecutive_hours
+    )
+
+    if now >= committed_end:
+        # Committed block has completed its full duration
+        _LOGGER.debug(
+            "Committed block completed (started %s)",
+            active_block_start.isoformat(),
+        )
+        return current_state, None
+
+    # Still within committed duration — check price constraints
+    price_blocked = False
+    if (
+        not inverted
+        and always_expensive is not None
+        and current_price is not None
+        and current_price >= always_expensive
+    ):
+        price_blocked = True
+    elif (
+        inverted
+        and always_cheap is not None
+        and current_price is not None
+        and current_price <= always_cheap
+    ):
+        price_blocked = True
+
+    if price_blocked:
+        _LOGGER.info(
+            "Committed block ended early: price constraint at %.3f (started %s)",
+            current_price,
+            active_block_start.isoformat(),
+        )
+        return current_state, None
+
+    # Override: keep active for the remaining committed duration
+    remaining_min = (committed_end - now).total_seconds() / 60
+    _LOGGER.info(
+        "Committed block protection: keeping active (%.0f min remaining, started %s)",
+        remaining_min,
+        active_block_start.isoformat(),
+    )
+    if current_slot is not None:
+        current_slot["status"] = "active"
+    return "active", active_block_start
