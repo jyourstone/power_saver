@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.helpers import make_config_entry
+from helpers import make_config_entry
 
 from custom_components.power_saver.switch import ForceOnSwitch, ForceOffSwitch
 

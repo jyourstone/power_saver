@@ -5,8 +5,8 @@
 <h1 align="center">Power Saver</h1>
 
 <p align="center">
-  A Home Assistant custom integration that finds the cheapest (or most expensive) upcoming hours based on<br>
-  <a href="https://www.home-assistant.io/integrations/nordpool/">Nordpool</a> electricity prices to save money automatically.
+  A Home Assistant custom integration that schedules appliances during the cheapest (or most expensive) electricity hours using<br>
+  <a href="https://www.home-assistant.io/integrations/nordpool/">Nordpool</a> prices to save money automatically.
 </p>
 
 <p align="center">
@@ -20,13 +20,15 @@
 
 ## Features
 
-- **Price-based scheduling** — Automatically activates the cheapest/most expensive hours of the day
-- **Always-cheap threshold** — Slots below/above a price threshold are always activated
-- **Always-expensive threshold** — Safety cutoff to never activate above/below a certain price
+- **Two scheduling strategies** — Choose the one that fits your appliance
+  - **Lowest Price** — Activate the cheapest hours within fixed time periods (e.g., cheapest 4 hours per day)
+  - **Minimum Runtime** — Rolling window scheduling that ensures a minimum number of hours are active within a configurable window, at the cheapest available times (e.g., water heater must run 4 hours within every 28-hour window)
+- **Cheapest or most expensive mode** — Select cheapest hours (default) or invert to select the most expensive
+- **Always-cheap threshold** — Slots below a price threshold are always activated
+- **Always-expensive threshold** — Safety cutoff to never activate above a certain price
 - **Price similarity threshold** — Groups slots with nearly identical prices for more natural scheduling
-- **Rolling window constraint** — Ensures minimum activity within any configurable time window (e.g., water heater must run at least 4 hours in any 24-hour window)
 - **Minimum consecutive hours** — Prevents short on/off cycles by requiring a minimum run duration
-- **Excluded hours** — Block a time range from ever being activated (e.g., to avoid grid fee peak hours)
+- **Excluded hours** — Block a time range from ever being activated (e.g., avoid grid fee peak hours)
 - **Multiple instances** — Add one per appliance (water heater, floor heating, pool pump, etc.)
 - **Always on / Always off** — Force all controlled entities ON or OFF via switches, bypassing the schedule
 - **Emergency mode** — Keeps appliances running if price data is unavailable
@@ -58,31 +60,69 @@
 
 Click the button above, or add it manually:
 
-1. Go to **Settings** → **Devices & Services** → **Add Integration**
+1. Go to **Settings** -> **Devices & Services** -> **Add Integration**
 2. Search for **Power Saver**
-3. Fill in the configuration:
+3. Follow the setup wizard (3 steps)
+
+### Setup wizard
+
+The setup flow guides you through all settings in three steps:
+
+**Step 1 — Basics:** Select a Nord Pool sensor, give the instance a name, and choose a scheduling strategy (`Lowest Price` or `Minimum Runtime`).
+
+**Step 2 — Strategy settings:** Configure strategy-specific parameters.
+
+| Field | Strategy | Description |
+|-------|----------|-------------|
+| **Hours to activate per period** | Lowest Price | Number of cheapest hours to activate within each period |
+| **Period start time** | Lowest Price | Start of the optimization period |
+| **Period end time** | Lowest Price | End of the optimization period. Set both to the same value (e.g., 00:00) for full-day optimization. Supports cross-midnight periods (e.g., 22:00 to 06:00) |
+| **Minimum consecutive active hours** | Lowest Price | Minimum consecutive hours per active block. Prevents short on/off cycling (empty = disabled) |
+| **Minimum hours on** | Minimum Runtime | Total hours the device must run within each rolling window. Runtime is spread across the cheapest available slots (e.g., 4 hours to heat a water tank) |
+| **Rolling window** | Minimum Runtime | Size of the rolling time window in hours. The device must run for at least the minimum hours within this window (e.g., 28 hours = at least 4 hours on every 28 hours) |
+| **Minimum consecutive active hours** | Minimum Runtime | Minimum consecutive hours per active block. Prevents short on/off cycling (empty = individual 15-min slots allowed) |
+
+**Step 3 — Advanced options:** Price thresholds, time exclusions, and entity control.
 
 | Field | Description |
 |-------|-------------|
-| **Nord Pool sensor** | The Nord Pool sensor to use for electricity prices |
-| **Name** | A descriptive name (e.g., "Water Heater", "Floor Heating") |
-| **Mode** | `Cheapest` selects the cheapest hours; `Most expensive` selects the most expensive (inverts the schedule) |
-| **Rolling window hours** | Ensures minimum hours within a rolling window (default = 24) |
-| **Minimum active hours** | How many hours per day the appliance should run |
+| **Mode** | `Cheapest hours` selects the cheapest hours; `Most expensive hours` inverts the schedule |
 | **Always-cheap price** | Price below which slots are always active (empty = disabled) |
 | **Always-expensive price** | Price at/above which slots are never active (empty = disabled) |
-| **Price similarity threshold** | Prices within this range are treated as equal (empty = disabled) |
-| **Minimum consecutive active hours** | Minimum number of hours to keep active in a row (empty = disabled) |
-| **Exclude from / Exclude until** | Time range during which slots are never activated and ignored by the scheduler. Useful for avoiding hours with extra grid fees. Supports cross-midnight ranges (e.g., 22:00 to 06:00). Both fields must be set to enable (empty = disabled) |
+| **Price similarity threshold** | Prices within this percentage are treated as equal (empty = disabled) |
+| **Exclude from / Exclude until** | Time range during which slots are never activated. Supports cross-midnight (e.g., 22:00 to 06:00). Both fields must be set (empty = disabled) |
 | **Controlled entities** | One or more `switch`, `input_boolean`, or `light` entities to turn on/off automatically (empty = disabled) |
-
-4. Click **Submit**
-
-To add another appliance, simply add a new service with different settings.
 
 ### Changing settings
 
-All scheduling parameters can be changed at any time via **Settings** → **Devices & Services** → **Power Saver** → **Configure**. Changes take effect immediately.
+All settings can be changed at any time via **Settings** -> **Devices & Services** -> **Power Saver** -> **Configure**. The options flow follows the same 3-step structure. Changes take effect immediately.
+
+## Scheduling Strategies
+
+### Lowest Price
+
+Activates the cheapest N hours within fixed, repeating time periods. Best for appliances with a regular schedule.
+
+**Example:** Run floor heating for the cheapest 6 hours per day.
+
+How it works:
+1. Slots are partitioned into periods based on period start/end times
+2. Within each period, the cheapest slots are activated up to the minimum hours quota
+3. Thresholds (always-cheap, always-expensive, similarity) are applied per period
+4. If minimum consecutive hours is set, short blocks are merged into longer ones
+
+### Minimum Runtime
+
+Rolling window scheduling for appliances that must run for a minimum time within a given window. Best for water heaters, storage tanks, and similar appliances.
+
+**Example:** Water heater must run at least 4 hours within every 28-hour rolling window, at the cheapest available times.
+
+How it works:
+1. A rolling window defines the total period (e.g., 28 hours). The device must be on for at least the minimum hours within this window
+2. Within each window, the cheapest available slots are activated up to the minimum hours quota
+3. Runtime can be spread across individual 15-minute slots or grouped into consecutive blocks (if minimum consecutive hours is set)
+4. On first run (no history), the full window is available for scheduling
+5. Always-cheap slots get bonus activations outside the scheduled window
 
 ## Sensors
 
@@ -106,6 +146,7 @@ Each instance creates the following sensors:
 | `min_price` | Lowest price today |
 | `max_price` | Highest price today |
 | `active_slots` | Total number of active slots in the schedule |
+| `strategy` | Current scheduling strategy (`lowest_price` or `minimum_runtime`) |
 
 ### Override switches
 
@@ -121,21 +162,14 @@ The two switches are mutually exclusive — enabling one automatically disables 
 | Sensor | Type | Description |
 |--------|------|-------------|
 | **Schedule** | Sensor | Full schedule with all time slots, prices, and statuses |
-| **Last Active** | Sensor | Timestamp of the last active slot |
-| **Active Hours in Window** | Sensor | Scheduled active hours in the upcoming rolling window |
-| **Next Change** | Sensor | Timestamp of the next state transition (displayed as relative time) |
+| **Last Active** | Sensor | Timestamp of the most recent past active slot |
+| **Active Hours in Period** | Sensor | Scheduled active hours in the current period |
+| **Next Change** | Sensor | Timestamp of the next state transition |
 | **Emergency Mode** | Binary sensor | Indicates if running without price data (problem badge) |
 
-## How it works
+## Upgrading to v3.x
 
-1. **Price data** — Reads prices from your Nord Pool sensor (today + tomorrow when available)
-2. **Excluded hours** (optional) — Marks slots in the excluded time range as permanently off, removing them from scheduling
-3. **Slot selection** — Selects the cheapest (or most expensive) slots from the remaining hours to meet your minimum active hours
-4. **Thresholds** — Applies always-cheap (force on) and always-expensive (force off) price thresholds
-5. **Similarity grouping** — Groups slots with nearly identical prices for more consistent scheduling
-6. **Rolling window** (optional) — Ensures minimum activity within any rolling time window, activating additional slots as needed
-7. **Consecutive hours** (optional) — Merges short active segments to prevent rapid on/off cycling
-8. **Updates** — Recalculates every 15 minutes and immediately when new prices arrive
+v3.x is a **breaking change**. Existing Power Saver entries must be removed and recreated. The setup flow now asks for a scheduling strategy upfront (`Lowest Price` or `Minimum Runtime`) and shows only the relevant settings for each strategy.
 
 ## Dashboard example
 

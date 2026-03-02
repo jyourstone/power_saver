@@ -40,20 +40,30 @@ from .const import (
     CONF_CONTROLLED_ENTITIES,
     CONF_EXCLUDE_FROM,
     CONF_EXCLUDE_UNTIL,
+    CONF_HOURS_PER_PERIOD,
+    CONF_ROLLING_WINDOW,
     CONF_MIN_CONSECUTIVE_HOURS,
-    CONF_MIN_HOURS,
+    CONF_MIN_HOURS_ON,
     CONF_NAME,
     CONF_NORDPOOL_SENSOR,
     CONF_NORDPOOL_TYPE,
+    CONF_PERIOD_FROM,
+    CONF_PERIOD_TO,
     CONF_PRICE_SIMILARITY_PCT,
-    CONF_ROLLING_WINDOW_HOURS,
     CONF_SELECTION_MODE,
-    DEFAULT_MIN_HOURS,
-    DEFAULT_ROLLING_WINDOW_HOURS,
+    CONF_STRATEGY,
+    DEFAULT_HOURS_PER_PERIOD,
+    DEFAULT_ROLLING_WINDOW,
+    DEFAULT_MIN_HOURS_ON,
+    DEFAULT_PERIOD_FROM,
+    DEFAULT_PERIOD_TO,
     DEFAULT_SELECTION_MODE,
+    DEFAULT_STRATEGY,
     DOMAIN,
     SELECTION_MODE_CHEAPEST,
     SELECTION_MODE_MOST_EXPENSIVE,
+    STRATEGY_LOWEST_PRICE,
+    STRATEGY_MINIMUM_RUNTIME,
 )
 from .nordpool_adapter import detect_nordpool_type, find_all_nordpool_sensors
 
@@ -76,95 +86,34 @@ def _optional_time(key: str, defaults: dict[str, Any]) -> vol.Optional:
     return vol.Optional(key)
 
 
-def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Build the schema for tunable options."""
-    if defaults is None:
-        defaults = {}
-    return vol.Schema(
-        {
-            # Selection mode
-            vol.Required(
-                CONF_SELECTION_MODE,
-                default=defaults.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE),
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(
-                            value=SELECTION_MODE_CHEAPEST,
-                            label=SELECTION_MODE_CHEAPEST,
-                        ),
-                        SelectOptionDict(
-                            value=SELECTION_MODE_MOST_EXPENSIVE,
-                            label=SELECTION_MODE_MOST_EXPENSIVE,
-                        ),
-                    ],
-                    mode="dropdown",
-                    translation_key=CONF_SELECTION_MODE,
-                )
-            ),
-            # Required scheduling parameters
-            vol.Required(
-                CONF_MIN_HOURS,
-                default=defaults.get(CONF_MIN_HOURS, DEFAULT_MIN_HOURS),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0, max=24, step=0.25, mode=NumberSelectorMode.BOX
-                )
-            ),
-            vol.Required(
-                CONF_ROLLING_WINDOW_HOURS,
-                default=defaults.get(CONF_ROLLING_WINDOW_HOURS, DEFAULT_ROLLING_WINDOW_HOURS),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=1, max=48, step=0.5, mode=NumberSelectorMode.BOX
-                )
-            ),
-            # Optional price thresholds (empty = disabled)
-            _optional_number(CONF_ALWAYS_CHEAP, defaults): NumberSelector(
-                NumberSelectorConfig(
-                    min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="SEK/kWh",
-                )
-            ),
-            _optional_number(CONF_ALWAYS_EXPENSIVE, defaults): NumberSelector(
-                NumberSelectorConfig(
-                    min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="SEK/kWh",
-                )
-            ),
-            _optional_number(CONF_PRICE_SIMILARITY_PCT, defaults): NumberSelector(
-                NumberSelectorConfig(
-                    min=0, max=100, step=1, mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="%",
-                )
-            ),
-            _optional_number(CONF_MIN_CONSECUTIVE_HOURS, defaults): NumberSelector(
-                NumberSelectorConfig(
-                    min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="hours",
-                )
-            ),
-            # Optional excluded time range
-            _optional_time(CONF_EXCLUDE_FROM, defaults): TimeSelector(),
-            _optional_time(CONF_EXCLUDE_UNTIL, defaults): TimeSelector(),
-            # Optional entity control
-            vol.Optional(
-                CONF_CONTROLLED_ENTITIES,
-                default=defaults.get(CONF_CONTROLLED_ENTITIES, []),
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    domain=["switch", "input_boolean", "light"],
-                    multiple=True,
-                )
-            ),
-        }
+def _strategy_selector() -> SelectSelector:
+    """Build strategy dropdown selector."""
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[
+                SelectOptionDict(
+                    value=STRATEGY_LOWEST_PRICE,
+                    label=STRATEGY_LOWEST_PRICE,
+                ),
+                SelectOptionDict(
+                    value=STRATEGY_MINIMUM_RUNTIME,
+                    label=STRATEGY_MINIMUM_RUNTIME,
+                ),
+            ],
+            mode="dropdown",
+            translation_key=CONF_STRATEGY,
+        )
     )
 
 
 class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Power Saver."""
 
-    VERSION = 1
+    VERSION = 3
+
+    def __init__(self) -> None:
+        """Initialize the config flow."""
+        self._user_input: dict[str, Any] = {}
 
     @staticmethod
     @callback
@@ -177,10 +126,9 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Step 1: Sensor + Name + Strategy."""
         errors: dict[str, str] = {}
 
-        # Detect all available Nord Pool sensors
         all_sensors = find_all_nordpool_sensors(self.hass)
 
         if user_input is not None:
@@ -193,47 +141,31 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors["base"] = "nordpool_not_found"
 
             if not errors:
-                # Set unique ID to prevent duplicates
                 name = user_input[CONF_NAME]
                 unique_id = f"{nordpool_entity}_{slugify(name)}"
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
 
-                # Split data (immutable) and options (mutable)
-                data = {
+                self._user_input = {
                     CONF_NORDPOOL_SENSOR: nordpool_entity,
                     CONF_NORDPOOL_TYPE: nordpool_type,
                     CONF_NAME: name,
-                }
-                options = {
-                    CONF_SELECTION_MODE: user_input.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE),
-                    CONF_MIN_HOURS: user_input[CONF_MIN_HOURS],
-                    CONF_ROLLING_WINDOW_HOURS: user_input[CONF_ROLLING_WINDOW_HOURS],
-                    CONF_ALWAYS_CHEAP: user_input.get(CONF_ALWAYS_CHEAP),
-                    CONF_ALWAYS_EXPENSIVE: user_input.get(CONF_ALWAYS_EXPENSIVE),
-                    CONF_PRICE_SIMILARITY_PCT: user_input.get(CONF_PRICE_SIMILARITY_PCT),
-                    CONF_MIN_CONSECUTIVE_HOURS: user_input.get(CONF_MIN_CONSECUTIVE_HOURS),
-                    CONF_EXCLUDE_FROM: user_input.get(CONF_EXCLUDE_FROM),
-                    CONF_EXCLUDE_UNTIL: user_input.get(CONF_EXCLUDE_UNTIL),
-                    CONF_CONTROLLED_ENTITIES: user_input.get(CONF_CONTROLLED_ENTITIES, []),
+                    CONF_STRATEGY: user_input[CONF_STRATEGY],
                 }
 
-                return self.async_create_entry(
-                    title=name,
-                    data=data,
-                    options=options,
-                )
+                strategy = user_input[CONF_STRATEGY]
+                if strategy == STRATEGY_MINIMUM_RUNTIME:
+                    return await self.async_step_minimum_runtime()
+                return await self.async_step_lowest_price()
 
         if not all_sensors:
             errors["base"] = "nordpool_not_found"
 
-        # Build sensor selector options with friendly labels
         sensor_options = [
             SelectOptionDict(value=entity_id, label=label)
             for entity_id, _, label in all_sensors
         ]
 
-        # Pre-select if only one sensor exists
         sensor_default: str | vol.Undefined = vol.UNDEFINED
         if len(all_sensors) == 1:
             sensor_default = all_sensors[0][0]
@@ -249,8 +181,11 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 ),
                 vol.Required(CONF_NAME): TextSelector(),
+                vol.Required(
+                    CONF_STRATEGY, default=DEFAULT_STRATEGY
+                ): _strategy_selector(),
             }
-        ).extend(_options_schema().schema)
+        )
 
         return self.async_show_form(
             step_id="user",
@@ -258,15 +193,215 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_lowest_price(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2a: Lowest Price settings."""
+        if user_input is not None:
+            self._user_input.update(user_input)
+            return await self.async_step_common_options()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_HOURS_PER_PERIOD, default=DEFAULT_HOURS_PER_PERIOD
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=24, step=0.25, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Required(
+                    CONF_PERIOD_FROM, default=DEFAULT_PERIOD_FROM
+                ): TimeSelector(),
+                vol.Required(
+                    CONF_PERIOD_TO, default=DEFAULT_PERIOD_TO
+                ): TimeSelector(),
+                vol.Optional(CONF_MIN_CONSECUTIVE_HOURS): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="lowest_price",
+            data_schema=schema,
+        )
+
+    async def async_step_minimum_runtime(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2b: Minimum Runtime settings."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if user_input[CONF_ROLLING_WINDOW] < user_input[CONF_MIN_HOURS_ON]:
+                errors["base"] = "rolling_window_too_small"
+            else:
+                self._user_input.update(user_input)
+                return await self.async_step_common_options()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_MIN_HOURS_ON, default=DEFAULT_MIN_HOURS_ON
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+                vol.Required(
+                    CONF_ROLLING_WINDOW, default=DEFAULT_ROLLING_WINDOW
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=2, max=72, step=0.5, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+                vol.Optional(CONF_MIN_CONSECUTIVE_HOURS): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="minimum_runtime",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_common_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 3: Common options (mode, thresholds, exclusion, entities)."""
+        if user_input is not None:
+            data = {
+                CONF_NORDPOOL_SENSOR: self._user_input[CONF_NORDPOOL_SENSOR],
+                CONF_NORDPOOL_TYPE: self._user_input[CONF_NORDPOOL_TYPE],
+                CONF_NAME: self._user_input[CONF_NAME],
+            }
+            strategy = self._user_input[CONF_STRATEGY]
+            options: dict[str, Any] = {
+                CONF_STRATEGY: strategy,
+                CONF_SELECTION_MODE: user_input.get(
+                    CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE
+                ),
+            }
+            # Add strategy-specific keys
+            if strategy == STRATEGY_LOWEST_PRICE:
+                options[CONF_HOURS_PER_PERIOD] = self._user_input[CONF_HOURS_PER_PERIOD]
+                options[CONF_PERIOD_FROM] = self._user_input[CONF_PERIOD_FROM]
+                options[CONF_PERIOD_TO] = self._user_input[CONF_PERIOD_TO]
+                if self._user_input.get(CONF_MIN_CONSECUTIVE_HOURS) is not None:
+                    options[CONF_MIN_CONSECUTIVE_HOURS] = self._user_input[
+                        CONF_MIN_CONSECUTIVE_HOURS
+                    ]
+            else:
+                options[CONF_ROLLING_WINDOW] = self._user_input[CONF_ROLLING_WINDOW]
+                options[CONF_MIN_HOURS_ON] = self._user_input[CONF_MIN_HOURS_ON]
+                if self._user_input.get(CONF_MIN_CONSECUTIVE_HOURS) is not None:
+                    options[CONF_MIN_CONSECUTIVE_HOURS] = self._user_input[
+                        CONF_MIN_CONSECUTIVE_HOURS
+                    ]
+
+            # Add common optional keys
+            for key in (
+                CONF_ALWAYS_CHEAP,
+                CONF_ALWAYS_EXPENSIVE,
+                CONF_PRICE_SIMILARITY_PCT,
+                CONF_EXCLUDE_FROM,
+                CONF_EXCLUDE_UNTIL,
+            ):
+                if user_input.get(key) is not None:
+                    options[key] = user_input[key]
+            if user_input.get(CONF_CONTROLLED_ENTITIES):
+                options[CONF_CONTROLLED_ENTITIES] = user_input[
+                    CONF_CONTROLLED_ENTITIES
+                ]
+
+            return self.async_create_entry(
+                title=self._user_input[CONF_NAME],
+                data=data,
+                options=options,
+            )
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_SELECTION_MODE, default=DEFAULT_SELECTION_MODE
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                value=SELECTION_MODE_CHEAPEST,
+                                label=SELECTION_MODE_CHEAPEST,
+                            ),
+                            SelectOptionDict(
+                                value=SELECTION_MODE_MOST_EXPENSIVE,
+                                label=SELECTION_MODE_MOST_EXPENSIVE,
+                            ),
+                        ],
+                        mode="dropdown",
+                        translation_key=CONF_SELECTION_MODE,
+                    )
+                ),
+                vol.Optional(CONF_ALWAYS_CHEAP): NumberSelector(
+                    NumberSelectorConfig(
+                        min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="SEK/kWh",
+                    )
+                ),
+                vol.Optional(CONF_ALWAYS_EXPENSIVE): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="SEK/kWh",
+                    )
+                ),
+                vol.Optional(CONF_PRICE_SIMILARITY_PCT): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=100, step=1, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="%",
+                    )
+                ),
+                vol.Optional(CONF_EXCLUDE_FROM): TimeSelector(),
+                vol.Optional(CONF_EXCLUDE_UNTIL): TimeSelector(),
+                vol.Optional(
+                    CONF_CONTROLLED_ENTITIES, default=[]
+                ): EntitySelector(
+                    EntitySelectorConfig(
+                        domain=["switch", "input_boolean", "light"],
+                        multiple=True,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="common_options",
+            data_schema=schema,
+        )
+
 
 class PowerSaverOptionsFlow(OptionsFlowWithReload):
     """Handle options flow for Power Saver."""
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the options flow."""
+        super().__init__(*args, **kwargs)
+        self._options: dict[str, Any] = {}
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
+        """Step 1: Strategy + Nord Pool sensor."""
         errors: dict[str, str] = {}
+        defaults = dict(self.config_entry.options)
 
         if user_input is not None:
             # Handle Nord Pool sensor change (stored in data, not options)
@@ -290,9 +425,13 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
                     )
 
             if not errors:
-                return self.async_create_entry(data=user_input)
+                self._options = dict(user_input)
+                strategy = user_input.get(CONF_STRATEGY, DEFAULT_STRATEGY)
+                if strategy == STRATEGY_MINIMUM_RUNTIME:
+                    return await self.async_step_minimum_runtime()
+                return await self.async_step_lowest_price()
 
-        # Build sensor selector for the options form
+        # Build sensor selector
         all_sensors = find_all_nordpool_sensors(self.hass)
         current_sensor = self.config_entry.data.get(CONF_NORDPOOL_SENSOR, "")
 
@@ -301,14 +440,13 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
             for entity_id, _, label in all_sensors
         ]
 
-        # Ensure the current sensor is in the list (even if no longer detected)
         current_in_list = any(s[0] == current_sensor for s in all_sensors)
         if not current_in_list and current_sensor:
             sensor_options.append(
                 SelectOptionDict(value=current_sensor, label=current_sensor)
             )
 
-        sensor_schema = vol.Schema(
+        schema = vol.Schema(
             {
                 vol.Required(
                     CONF_NORDPOOL_SENSOR, default=current_sensor
@@ -318,15 +456,174 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
                         mode="dropdown",
                     )
                 ),
+                vol.Required(
+                    CONF_STRATEGY,
+                    default=defaults.get(CONF_STRATEGY, DEFAULT_STRATEGY),
+                ): _strategy_selector(),
             }
-        )
-
-        schema = sensor_schema.extend(
-            _options_schema(self.config_entry.options).schema
         )
 
         return self.async_show_form(
             step_id="init",
             data_schema=schema,
             errors=errors,
+        )
+
+    async def async_step_lowest_price(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2a: Lowest Price strategy options."""
+        defaults = dict(self.config_entry.options)
+
+        if user_input is not None:
+            self._options.update(user_input)
+            return await self.async_step_common_options()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_HOURS_PER_PERIOD,
+                    default=defaults.get(CONF_HOURS_PER_PERIOD, DEFAULT_HOURS_PER_PERIOD),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=24, step=0.25, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Required(
+                    CONF_PERIOD_FROM,
+                    default=defaults.get(CONF_PERIOD_FROM, DEFAULT_PERIOD_FROM),
+                ): TimeSelector(),
+                vol.Required(
+                    CONF_PERIOD_TO,
+                    default=defaults.get(CONF_PERIOD_TO, DEFAULT_PERIOD_TO),
+                ): TimeSelector(),
+                _optional_number(CONF_MIN_CONSECUTIVE_HOURS, defaults): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="lowest_price",
+            data_schema=schema,
+        )
+
+    async def async_step_minimum_runtime(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2b: Minimum Runtime strategy options."""
+        defaults = dict(self.config_entry.options)
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if user_input[CONF_ROLLING_WINDOW] < user_input[CONF_MIN_HOURS_ON]:
+                errors["base"] = "rolling_window_too_small"
+            else:
+                self._options.update(user_input)
+                return await self.async_step_common_options()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_MIN_HOURS_ON,
+                    default=defaults.get(CONF_MIN_HOURS_ON, DEFAULT_MIN_HOURS_ON),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+                vol.Required(
+                    CONF_ROLLING_WINDOW,
+                    default=defaults.get(CONF_ROLLING_WINDOW, DEFAULT_ROLLING_WINDOW),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=2, max=72, step=0.5, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+                _optional_number(CONF_MIN_CONSECUTIVE_HOURS, defaults): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.25, max=24, step=0.25, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="minimum_runtime",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_common_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 3: Common options (mode, thresholds, exclusion, entities)."""
+        defaults = dict(self.config_entry.options)
+
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(data=self._options)
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_SELECTION_MODE,
+                    default=defaults.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                value=SELECTION_MODE_CHEAPEST,
+                                label=SELECTION_MODE_CHEAPEST,
+                            ),
+                            SelectOptionDict(
+                                value=SELECTION_MODE_MOST_EXPENSIVE,
+                                label=SELECTION_MODE_MOST_EXPENSIVE,
+                            ),
+                        ],
+                        mode="dropdown",
+                        translation_key=CONF_SELECTION_MODE,
+                    )
+                ),
+                _optional_number(CONF_ALWAYS_CHEAP, defaults): NumberSelector(
+                    NumberSelectorConfig(
+                        min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="SEK/kWh",
+                    )
+                ),
+                _optional_number(CONF_ALWAYS_EXPENSIVE, defaults): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="SEK/kWh",
+                    )
+                ),
+                _optional_number(CONF_PRICE_SIMILARITY_PCT, defaults): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=100, step=1, mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="%",
+                    )
+                ),
+                _optional_time(CONF_EXCLUDE_FROM, defaults): TimeSelector(),
+                _optional_time(CONF_EXCLUDE_UNTIL, defaults): TimeSelector(),
+                vol.Optional(
+                    CONF_CONTROLLED_ENTITIES,
+                    default=defaults.get(CONF_CONTROLLED_ENTITIES, []),
+                ): EntitySelector(
+                    EntitySelectorConfig(
+                        domain=["switch", "input_boolean", "light"],
+                        multiple=True,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="common_options",
+            data_schema=schema,
         )

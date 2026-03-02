@@ -3,32 +3,66 @@
     "step": {
       "user": {
         "title": "Set up Power Saver",
-        "description": "Configure a power saver instance for an appliance. Select which Nord Pool sensor to use for price data. You can add multiple instances for different appliances.",
+        "description": "Configure a power saver instance for an appliance. Select which Nord Pool sensor to use for price data.",
         "data": {
           "nordpool_sensor": "Nord Pool sensor",
           "name": "Name",
+          "strategy": "Strategy"
+        },
+        "data_description": {
+          "nordpool_sensor": "The Nord Pool sensor to use for electricity prices.",
+          "name": "A descriptive name for this instance (e.g., 'Water Heater').",
+          "strategy": "Lowest Price: activate cheapest hours within fixed time periods. Minimum Runtime: ensure a minimum number of hours are active within a rolling window."
+        }
+      },
+      "lowest_price": {
+        "title": "Lowest Price Settings",
+        "description": "Configure the time period and hours for price optimization. Set period from/to to the same value (e.g., both 00:00) for full-day optimization.",
+        "data": {
+          "hours_per_period": "Hours to activate per period",
+          "period_from": "Period start time",
+          "period_to": "Period end time",
+          "min_consecutive_hours": "Minimum consecutive active hours (optional)"
+        },
+        "data_description": {
+          "hours_per_period": "Number of cheapest hours to activate within each period.",
+          "period_from": "Start of the optimization period.",
+          "period_to": "End of the optimization period. Supports cross-midnight periods (e.g., 22:00 to 06:00).",
+          "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to disable."
+        }
+      },
+      "minimum_runtime": {
+        "title": "Minimum Runtime Settings",
+        "description": "Configure the rolling window and minimum runtime for the device. The device will run for at least the minimum hours within each rolling window, at the cheapest available times.",
+        "data": {
+          "min_hours_on": "Minimum hours on",
+          "rolling_window": "Rolling window",
+          "min_consecutive_hours": "Minimum consecutive active hours (optional)"
+        },
+        "data_description": {
+          "min_hours_on": "Total hours the device must run within each rolling window. Runtime is spread across the cheapest available slots. For example, 4 hours to properly heat a water tank.",
+          "rolling_window": "Size of the rolling time window in hours. The device must run for at least the minimum hours within this window. For example, 28 hours means the device runs at least 4 hours (as per the example above) every 28 hours.",
+          "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to allow individual 15-minute slots."
+        }
+      },
+      "common_options": {
+        "title": "Advanced Options",
+        "description": "Configure price thresholds, time exclusions, and entity control.",
+        "data": {
           "selection_mode": "Mode",
-          "min_hours": "Minimum active hours",
-          "rolling_window_hours": "Rolling window size (hours)",
           "always_cheap_price": "Always-cheap price threshold (optional)",
           "always_expensive_price": "Always-expensive price threshold (optional)",
           "price_similarity_pct": "Price similarity threshold (optional)",
-          "min_consecutive_hours": "Minimum consecutive active hours (optional)",
           "exclude_from": "Exclude from (optional)",
           "exclude_until": "Exclude until (optional)",
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
-          "nordpool_sensor": "The Nord Pool sensor to use for electricity prices. If you have multiple Nord Pool entries (e.g., different price regions), select the one for this appliance.",
-          "name": "A descriptive name for this instance (e.g., 'Water Heater').",
           "selection_mode": "Choose whether to activate the cheapest hours (default) or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
-          "min_hours": "Minimum number of hours to keep active within each rolling window.",
-          "rolling_window_hours": "Time window in hours to spread active slots across. Smaller values prevent long inactive gaps. 24 = optimize across the full day.",
-          "always_cheap_price": "Price below which the slot is always activated, regardless of other settings. In 'Most expensive' mode: never activate below this price. Leave empty to disable.",
-          "always_expensive_price": "Price at or above which the slot is never activated (safety cutoff). In 'Most expensive' mode: always activate above this price. Leave empty to disable.",
-          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. For example, 20% means any slot up to 1.2\u00d7 the cheapest price is also activated. In 'Most expensive' mode: computed from the most expensive price downward. Useful on flat-price days. Leave empty to disable.",
-          "min_consecutive_hours": "Minimum number of consecutive hours per active block. Prevents short on/off cycling for appliances like water heaters. Short blocks are extended by activating adjacent slots. Leave empty to disable.",
-          "exclude_from": "Start of excluded time range. Slots during this period are never activated and ignored by the scheduling algorithm. Useful for avoiding hours with extra grid fees. Supports cross-midnight ranges (e.g., 22:00 to 06:00). Both fields must be set to enable. Leave empty to disable.",
+          "always_cheap_price": "Price below which the slot is always activated. In 'Most expensive' mode: never activate below this price. Leave empty to disable.",
+          "always_expensive_price": "Price at or above which the slot is never activated. In 'Most expensive' mode: always activate above this price. Leave empty to disable.",
+          "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. In 'Most expensive' mode: computed from the most expensive price downward. Leave empty to disable.",
+          "exclude_from": "Start of excluded time range. Slots during this period are never activated. Supports cross-midnight ranges (e.g., 22:00 to 06:00). Both fields must be set to enable. Leave empty to disable.",
           "exclude_until": "End of excluded time range. Both fields must be set to enable. Leave empty to disable.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
@@ -36,7 +70,8 @@
     },
     "error": {
       "nordpool_not_found": "No Nord Pool integration found. Please set up the Nord Pool integration (HACS or native) before configuring Power Saver.",
-      "already_configured": "A power saver with this name and sensor is already configured."
+      "already_configured": "A power saver with this name and sensor is already configured.",
+      "rolling_window_too_small": "Rolling window must be at least as large as the minimum hours on."
     },
     "abort": {
       "already_configured": "This power saver instance is already configured."
@@ -46,30 +81,64 @@
     "step": {
       "init": {
         "title": "Power Saver Options",
-        "description": "Adjust scheduling parameters. Changes take effect immediately.",
+        "description": "Select a scheduling strategy and Nord Pool sensor. Changes take effect immediately.",
         "data": {
           "nordpool_sensor": "Nord Pool sensor",
+          "strategy": "Strategy"
+        },
+        "data_description": {
+          "nordpool_sensor": "The Nord Pool sensor to use for electricity prices.",
+          "strategy": "Lowest Price: activate cheapest hours within fixed time periods. Minimum Runtime: ensure a minimum number of hours are active within a rolling window."
+        }
+      },
+      "lowest_price": {
+        "title": "Lowest Price Options",
+        "description": "Configure the time period for price optimization. Set period from/to to the same value (e.g., both 00:00) for full-day optimization.",
+        "data": {
+          "hours_per_period": "Hours to activate per period",
+          "period_from": "Period start time",
+          "period_to": "Period end time",
+          "min_consecutive_hours": "Minimum consecutive active hours (optional)"
+        },
+        "data_description": {
+          "hours_per_period": "Number of cheapest hours to activate within each period.",
+          "period_from": "Start of the optimization period. When equal to period end, each calendar day is one period.",
+          "period_to": "End of the optimization period. Supports cross-midnight periods (e.g., 22:00 to 06:00).",
+          "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to disable."
+        }
+      },
+      "minimum_runtime": {
+        "title": "Minimum Runtime Options",
+        "description": "Configure the rolling window and minimum runtime for the device.",
+        "data": {
+          "min_hours_on": "Minimum hours on",
+          "rolling_window": "Rolling window",
+          "min_consecutive_hours": "Minimum consecutive active hours (optional)"
+        },
+        "data_description": {
+          "min_hours_on": "Total hours the device must run within each rolling window. Runtime is spread across the cheapest available slots.",
+          "rolling_window": "Size of the rolling time window in hours. The device must run for at least the minimum hours within this window.",
+          "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to allow individual 15-minute slots."
+        }
+      },
+      "common_options": {
+        "title": "Advanced Options",
+        "description": "Configure price thresholds, time exclusions, and entity control.",
+        "data": {
           "selection_mode": "Mode",
-          "min_hours": "Minimum active hours",
-          "rolling_window_hours": "Rolling window size (hours)",
           "always_cheap_price": "Always-cheap price threshold (optional)",
           "always_expensive_price": "Always-expensive price threshold (optional)",
           "price_similarity_pct": "Price similarity threshold (optional)",
-          "min_consecutive_hours": "Minimum consecutive active hours (optional)",
           "exclude_from": "Exclude from (optional)",
           "exclude_until": "Exclude until (optional)",
           "controlled_entities": "Controlled entities"
         },
         "data_description": {
-          "nordpool_sensor": "The Nord Pool sensor to use for electricity prices.",
-          "selection_mode": "Choose whether to activate the cheapest hours or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
-          "min_hours": "Minimum number of hours to keep active within each rolling window.",
-          "rolling_window_hours": "Time window in hours to spread active slots across. Smaller = more evenly spread. 24 = full day.",
-          "always_cheap_price": "Price below which slots are always activated. In 'Most expensive' mode: never activate below this price. Leave empty to disable.",
-          "always_expensive_price": "Price at or above which slots are never activated. In 'Most expensive' mode: always activate above this price. Leave empty to disable.",
+          "selection_mode": "Choose whether to activate the cheapest hours (default) or the most expensive hours. In 'Most expensive' mode the threshold roles described below are swapped.",
+          "always_cheap_price": "Price below which the slot is always activated. In 'Most expensive' mode: never activate below this price. Leave empty to disable.",
+          "always_expensive_price": "Price at or above which the slot is never activated. In 'Most expensive' mode: always activate above this price. Leave empty to disable.",
           "price_similarity_pct": "Also activate slots within this percentage of the cheapest price. In 'Most expensive' mode: computed from the most expensive price downward. Leave empty to disable.",
-          "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to disable.",
-          "exclude_from": "Start of excluded time range. Slots during this period are never activated and ignored by the scheduling algorithm. Useful for avoiding hours with extra grid fees. Supports cross-midnight ranges (e.g., 22:00 to 06:00). Both fields must be set to enable. Leave empty to disable.",
+          "exclude_from": "Start of excluded time range. Slots during this period are never activated. Supports cross-midnight ranges (e.g., 22:00 to 06:00). Both fields must be set to enable. Leave empty to disable.",
           "exclude_until": "End of excluded time range. Both fields must be set to enable. Leave empty to disable.",
           "controlled_entities": "Entities to turn on/off when state changes. Leave empty to control via your own automations."
         }
@@ -77,6 +146,12 @@
     }
   },
   "selector": {
+    "strategy": {
+      "options": {
+        "lowest_price": "Lowest Price",
+        "minimum_runtime": "Minimum Runtime"
+      }
+    },
     "selection_mode": {
       "options": {
         "cheapest": "Cheapest hours",
@@ -95,8 +170,8 @@
       "last_active": {
         "name": "Last Active"
       },
-      "active_hours_in_window": {
-        "name": "Active Time in Window"
+      "active_hours_in_period": {
+        "name": "Active Hours in Period"
       },
       "next_change": {
         "name": "Next Change"

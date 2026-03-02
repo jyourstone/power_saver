@@ -3,32 +3,66 @@
     "step": {
       "user": {
         "title": "Konfigurera Power Saver",
-        "description": "Konfigurera en Power Saver integrationspost för en enhet. Välj vilken Nord Pool-sensor som ska användas för prisdata. Du kan lägga till flera poster för olika enheter.",
+        "description": "Konfigurera en Power Saver-instans för en enhet. Välj vilken Nord Pool-sensor som ska användas för prisdata.",
         "data": {
           "nordpool_sensor": "Nord Pool-sensor",
           "name": "Namn",
+          "strategy": "Strategi"
+        },
+        "data_description": {
+          "nordpool_sensor": "Nord Pool-sensorn som ska användas för elpriser. Om du har flera Nord Pool-poster (t.ex. olika prisområden), välj den för denna enhet.",
+          "name": "Ett beskrivande namn för denna instans (t.ex. 'Varmvattenberedare').",
+          "strategy": "Lägsta pris: aktivera billigaste timmarna inom fasta tidsperioder. Minsta körtid: säkerställ att enheten körs ett minsta antal timmar inom ett rullande tidsfönster."
+        }
+      },
+      "lowest_price": {
+        "title": "Lägsta pris-inställningar",
+        "description": "Konfigurera tidsperioden och antal timmar för prisoptimering. För en hel dag, ange både starttid och sluttid till 00:00.",
+        "data": {
+          "hours_per_period": "Timmar att aktivera per period",
+          "period_from": "Periodens starttid",
+          "period_to": "Periodens sluttid",
+          "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)"
+        },
+        "data_description": {
+          "hours_per_period": "Antal billigaste timmar att aktivera inom varje period.",
+          "period_from": "Starttid för optimeringsperioden.",
+          "period_to": "Sluttid för optimeringsperioden. Stöder midnattsövergående perioder (t.ex. 22:00 till 06:00).",
+          "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att inaktivera."
+        }
+      },
+      "minimum_runtime": {
+        "title": "Minsta körtid-inställningar",
+        "description": "Konfigurera det rullande tidsfönstret och minsta körtid för enheten. Enheten körs minst det angivna antalet timmar inom varje tidsfönster, vid de billigaste tillgängliga tiderna.",
+        "data": {
+          "min_hours_on": "Minsta antal timmar på",
+          "rolling_window": "Rullande tidsfönster",
+          "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)"
+        },
+        "data_description": {
+          "min_hours_on": "Totalt antal timmar enheten måste köra inom varje rullande tidsfönster. Körtiden sprids över de billigaste tillgängliga tidsluckorna. Till exempel 4 timmar för att värma en varmvattenberedare ordentligt.",
+          "rolling_window": "Storlek på det rullande tidsfönstret i timmar. Enheten måste köra minst det angivna antalet timmar inom detta fönster. Till exempel 28 timmar innebär att enheten körs minst 4 timmar (enligt exemplet ovan) var 28:e timme.",
+          "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att tillåta enskilda 15-minuters tidsluckor."
+        }
+      },
+      "common_options": {
+        "title": "Avancerade inställningar",
+        "description": "Konfigurera priströsklar, tidsexkluderingar och entitetsstyrning.",
+        "data": {
           "selection_mode": "Läge",
-          "min_hours": "Minsta antal aktiva timmar",
-          "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
           "always_cheap_price": "Alltid billigt prisgräns (valfritt)",
           "always_expensive_price": "Alltid dyrt prisgräns (valfritt)",
           "price_similarity_pct": "Prislikhetströskel (valfritt)",
-          "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)",
           "exclude_from": "Exkludera från (valfritt)",
           "exclude_until": "Exkludera till (valfritt)",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
-          "nordpool_sensor": "Nord Pool-sensorn som ska användas för elpriser.",
-          "name": "Ett beskrivande namn för denna integrationspost (t.ex. 'Varmvattenberedare').",
-          "selection_mode": "Välj om de billigaste timmarna (standard) eller de dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller enligt beskrivningarna nedan.",
-          "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",
-          "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre värden förhindrar långa inaktiva perioder. 24 = optimera över hela dygnet.",
-          "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras, oavsett andra inställningar. I läget 'Dyraste timmarna': aktivera aldrig under detta pris. Lämna tomt för att inaktivera.",
+          "selection_mode": "Välj om de billigaste timmarna (standard) eller de dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller.",
+          "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras. I läget 'Dyraste timmarna': aktivera aldrig under detta pris. Lämna tomt för att inaktivera.",
           "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. I läget 'Dyraste timmarna': aktivera alltid över detta pris. Lämna tomt för att inaktivera.",
-          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. T.ex. 20 % innebär att tidsluckor upp till 1,2\u00d7 billigaste priset också aktiveras. I läget 'Dyraste timmarna': beräknas från det dyraste priset nedåt. Användbart vid jämna priser. Lämna tomt för att inaktivera.",
-          "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler för apparater som varmvattenberedare. Korta block förlängs genom att aktivera angränsande tidsluckor. Lämna tomt för att inaktivera.",
-          "exclude_from": "Start på exkluderad tidsperiod. Tidsluckor under denna period aktiveras aldrig och ignoreras av schemaläggningslogiken. Stöder midnattsövergång (t.ex. 22:00 till 06:00). Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
+          "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. I läget 'Dyraste timmarna': beräknas från det dyraste priset nedåt. Lämna tomt för att inaktivera.",
+          "exclude_from": "Start på exkluderad tidsperiod. Tidsluckor under denna period aktiveras aldrig. Stöder midnattsövergång (t.ex. 22:00 till 06:00). Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
           "exclude_until": "Slut på exkluderad tidsperiod. Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
@@ -36,40 +70,75 @@
     },
     "error": {
       "nordpool_not_found": "Ingen Nord Pool-integration hittades. Konfigurera Nord Pool-integrationen (HACS eller inbyggd) innan du konfigurerar Power Saver.",
-      "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad."
+      "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad.",
+      "rolling_window_too_small": "Rullande fönster måste vara minst lika stort som minsta antal timmar på."
     },
     "abort": {
-      "already_configured": "Denna Power Saver-integrationspost är redan konfigurerad."
+      "already_configured": "Denna Power Saver-instans är redan konfigurerad."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Power Saver-inställningar",
-        "description": "Justera schemaläggningsparametrar. Ändringar träder i kraft omedelbart.",
+        "description": "Välj en schemaläggningsstrategi och Nord Pool-sensor. Ändringar träder i kraft omedelbart.",
         "data": {
           "nordpool_sensor": "Nord Pool-sensor",
+          "strategy": "Strategi"
+        },
+        "data_description": {
+          "nordpool_sensor": "Nord Pool-sensorn som ska användas för elpriser.",
+          "strategy": "Lägsta pris: aktivera billigaste timmarna inom fasta tidsperioder. Minsta körtid: säkerställ att enheten körs ett minsta antal timmar inom ett rullande tidsfönster."
+        }
+      },
+      "lowest_price": {
+        "title": "Lägsta pris-inställningar",
+        "description": "Konfigurera tidsperioden för prisoptimering. Ställ in period från/till samma värde (t.ex. båda 00:00) för heldagsoptimering.",
+        "data": {
+          "hours_per_period": "Timmar att aktivera per period",
+          "period_from": "Periodens starttid",
+          "period_to": "Periodens sluttid",
+          "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)"
+        },
+        "data_description": {
+          "hours_per_period": "Antal billigaste timmar att aktivera inom varje period.",
+          "period_from": "Start av optimeringsperioden. När lika med periodens slut är varje kalenderdag en period.",
+          "period_to": "Slut av optimeringsperioden. Stöder midnattsövergående perioder (t.ex. 22:00 till 06:00).",
+          "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att inaktivera."
+        }
+      },
+      "minimum_runtime": {
+        "title": "Minsta körtid-inställningar",
+        "description": "Konfigurera det rullande tidsfönstret och minsta körtid för enheten.",
+        "data": {
+          "min_hours_on": "Minsta antal timmar på",
+          "rolling_window": "Rullande tidsfönster",
+          "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)"
+        },
+        "data_description": {
+          "min_hours_on": "Totalt antal timmar enheten måste köra inom varje rullande tidsfönster. Körtiden sprids över de billigaste tillgängliga tidsluckorna.",
+          "rolling_window": "Storlek på det rullande tidsfönstret i timmar. Enheten måste köra minst det angivna antalet timmar inom detta fönster.",
+          "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att tillåta enskilda 15-minuters tidsluckor."
+        }
+      },
+      "common_options": {
+        "title": "Avancerade inställningar",
+        "description": "Konfigurera priströsklar, tidsexkluderingar och entitetsstyrning.",
+        "data": {
           "selection_mode": "Läge",
-          "min_hours": "Minsta antal aktiva timmar",
-          "rolling_window_hours": "Rullande fönsterstorlek (timmar)",
           "always_cheap_price": "Alltid billigt prisgräns (valfritt)",
           "always_expensive_price": "Alltid dyrt prisgräns (valfritt)",
           "price_similarity_pct": "Prislikhetströskel (valfritt)",
-          "min_consecutive_hours": "Minsta sammanhängande aktiva timmar (valfritt)",
           "exclude_from": "Exkludera från (valfritt)",
           "exclude_until": "Exkludera till (valfritt)",
           "controlled_entities": "Styrda entiteter"
         },
         "data_description": {
-          "nordpool_sensor": "Nord Pool-sensorn som ska användas för elpriser.",
-          "selection_mode": "Välj om de billigaste eller dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller enligt beskrivningarna nedan.",
-          "min_hours": "Minsta antal timmar att hålla aktivt inom varje rullande fönster.",
-          "rolling_window_hours": "Tidsfönster i timmar att fördela aktiva tidsluckor över. Mindre = jämnare fördelning. 24 = hela dygnet.",
-          "always_cheap_price": "Pris under vilket tidsluckor alltid aktiveras. I läget 'Dyraste timmarna': aktivera aldrig under detta pris. Lämna tomt för att inaktivera.",
-          "always_expensive_price": "Pris vid eller över vilket tidsluckor aldrig aktiveras. I läget 'Dyraste timmarna': aktivera alltid över detta pris. Lämna tomt för att inaktivera.",
+          "selection_mode": "Välj om de billigaste timmarna (standard) eller de dyraste timmarna ska aktiveras. I läget 'Dyraste timmarna' byts tröskelvärdenas roller.",
+          "always_cheap_price": "Pris under vilket tidsluckan alltid aktiveras. I läget 'Dyraste timmarna': aktivera aldrig under detta pris. Lämna tomt för att inaktivera.",
+          "always_expensive_price": "Pris vid eller över vilket tidsluckan aldrig aktiveras. I läget 'Dyraste timmarna': aktivera alltid över detta pris. Lämna tomt för att inaktivera.",
           "price_similarity_pct": "Aktivera även tidsluckor inom denna procent av det billigaste priset. I läget 'Dyraste timmarna': beräknas från det dyraste priset nedåt. Lämna tomt för att inaktivera.",
-          "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att inaktivera.",
-          "exclude_from": "Start på exkluderad tidsperiod. Tidsluckor under denna period aktiveras aldrig och ignoreras av schemaläggningsalgoritmen. Användbart för att undvika timmar med extra nätavgifter (effektavgift). Stöder midnattsövergång (t.ex. 22:00 till 06:00). Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
+          "exclude_from": "Start på exkluderad tidsperiod. Tidsluckor under denna period aktiveras aldrig. Stöder midnattsövergång (t.ex. 22:00 till 06:00). Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
           "exclude_until": "Slut på exkluderad tidsperiod. Båda fälten måste anges för att aktivera. Lämna tomt för att inaktivera.",
           "controlled_entities": "Entiteter att slå på/av vid tillståndsändring. Lämna tomt för att styra via egna automationer."
         }
@@ -77,6 +146,12 @@
     }
   },
   "selector": {
+    "strategy": {
+      "options": {
+        "lowest_price": "Lägsta pris",
+        "minimum_runtime": "Minsta körtid"
+      }
+    },
     "selection_mode": {
       "options": {
         "cheapest": "Billigaste timmarna",
@@ -95,8 +170,8 @@
       "last_active": {
         "name": "Senast aktiv"
       },
-      "active_hours_in_window": {
-        "name": "Aktiv tid i fönster"
+      "active_hours_in_period": {
+        "name": "Aktiv tid i period"
       },
       "next_change": {
         "name": "Nästa ändring"
