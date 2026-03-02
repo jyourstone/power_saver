@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry

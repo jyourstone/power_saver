@@ -85,7 +85,11 @@ def _is_excluded(
     try:
         from_time = _parse_time(exclude_from)
         until_time = _parse_time(exclude_until)
-    except (ValueError, IndexError):
+    except (ValueError, IndexError) as exc:
+        _LOGGER.warning(
+            "Invalid exclusion time range '%s' - '%s': %s",
+            exclude_from, exclude_until, exc,
+        )
         return False
 
     slot_time = slot_start.time()
@@ -438,10 +442,12 @@ def active_hours_in_current_period(
                 )
                 return round(active / 4.0, 1)
 
-    # `now` is between periods — pick the closest one
-    # (most recent past period, or the first upcoming one)
-    best_indices = periods[0]
-    best_distance = None
+    # `now` is between periods — prefer the most recent past period,
+    # otherwise fall back to the earliest upcoming period.
+    best_past_indices = None
+    best_past_end = None
+    best_future_indices = None
+    best_future_start = None
     for indices in periods:
         first_time = datetime.fromisoformat(
             schedule[indices[0]]["time"]
@@ -449,11 +455,17 @@ def active_hours_in_current_period(
         last_time = datetime.fromisoformat(
             schedule[indices[-1]]["time"]
         ).astimezone(now.tzinfo)
-        dist = min(abs((first_time - now).total_seconds()),
-                   abs((last_time - now).total_seconds()))
-        if best_distance is None or dist < best_distance:
-            best_distance = dist
-            best_indices = indices
+        if last_time <= now:
+            if best_past_end is None or last_time > best_past_end:
+                best_past_end = last_time
+                best_past_indices = indices
+        else:
+            if best_future_start is None or first_time < best_future_start:
+                best_future_start = first_time
+                best_future_indices = indices
+    best_indices = best_past_indices if best_past_indices is not None else (
+        best_future_indices if best_future_indices is not None else periods[0]
+    )
 
     active = sum(
         1 for idx in best_indices if schedule[idx].get("status") == "active"

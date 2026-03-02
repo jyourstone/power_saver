@@ -1185,7 +1185,7 @@ class TestLowestPriceStrategy:
         )
 
         assert len(schedule_direct) == len(schedule_dispatched)
-        for a, b in zip(schedule_direct, schedule_dispatched):
+        for a, b in zip(schedule_direct, schedule_dispatched, strict=True):
             assert a["status"] == b["status"]
             assert a["time"] == b["time"]
             assert a["price"] == b["price"]
@@ -1450,7 +1450,7 @@ class TestMinimumRuntimeStrategy:
         )
 
         assert len(schedule_direct) == len(schedule_dispatched)
-        for a, b in zip(schedule_direct, schedule_dispatched):
+        for a, b in zip(schedule_direct, schedule_dispatched, strict=True):
             assert a["status"] == b["status"]
             assert a["time"] == b["time"]
 
