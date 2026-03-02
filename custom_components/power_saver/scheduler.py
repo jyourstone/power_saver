@@ -426,7 +426,7 @@ def active_hours_in_current_period(
     if not periods:
         # No periods at all (unlikely, but safe fallback)
         active = sum(1 for s in schedule if s.get("status") == "active")
-        return round(active / 4.0, 1)
+        return active / 4.0
 
     # Try to find the period whose time span covers `now`
     for indices in periods:
@@ -440,7 +440,7 @@ def active_hours_in_current_period(
                     for idx in indices
                     if schedule[idx].get("status") == "active"
                 )
-                return round(active / 4.0, 1)
+                return active / 4.0
 
     # `now` is between periods — prefer the most recent past period,
     # otherwise fall back to the earliest upcoming period.
@@ -470,7 +470,7 @@ def active_hours_in_current_period(
     active = sum(
         1 for idx in best_indices if schedule[idx].get("status") == "active"
     )
-    return round(active / 4.0, 1)
+    return active / 4.0
 
 
 # ---------------------------------------------------------------------------

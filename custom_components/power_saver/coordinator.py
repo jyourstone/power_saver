@@ -302,7 +302,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         # Compute active hours in period
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
         if strategy == STRATEGY_MINIMUM_RUNTIME:
-            active_hours_in_period = round(active_slots / 4.0, 1)
+            active_hours_in_period = active_slots / 4.0
         else:
             active_hours_in_period = scheduler.active_hours_in_current_period(
                 schedule, period_from, period_to, now
