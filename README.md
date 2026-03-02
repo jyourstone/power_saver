@@ -165,8 +165,6 @@ The two switches are mutually exclusive — enabling one automatically disables 
 | **Last Active** | Sensor | Timestamp of the most recent past active slot |
 | **Active Hours in Period** | Sensor | Scheduled active hours in the current period |
 | **Next Change** | Sensor | Timestamp of the next state transition |
-| **Hours Until Deadline** | Sensor | Hours remaining until the Minimum Runtime deadline (Minimum Runtime only) |
-| **Next On Time** | Sensor | Timestamp when the device will next turn on (Minimum Runtime only) |
 | **Emergency Mode** | Binary sensor | Indicates if running without price data (problem badge) |
 
 ## Upgrading to v3.x

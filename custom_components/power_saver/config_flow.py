@@ -234,9 +234,14 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Step 2b: Minimum Runtime settings."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            self._user_input.update(user_input)
-            return await self.async_step_common_options()
+            if user_input[CONF_ROLLING_WINDOW] < user_input[CONF_MIN_HOURS_ON]:
+                errors["base"] = "rolling_window_too_small"
+            else:
+                self._user_input.update(user_input)
+                return await self.async_step_common_options()
 
         schema = vol.Schema(
             {
@@ -268,6 +273,7 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="minimum_runtime",
             data_schema=schema,
+            errors=errors,
         )
 
     async def async_step_common_options(
@@ -510,10 +516,14 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Step 2b: Minimum Runtime strategy options."""
         defaults = dict(self.config_entry.options)
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._options.update(user_input)
-            return await self.async_step_common_options()
+            if user_input[CONF_ROLLING_WINDOW] < user_input[CONF_MIN_HOURS_ON]:
+                errors["base"] = "rolling_window_too_small"
+            else:
+                self._options.update(user_input)
+                return await self.async_step_common_options()
 
         schema = vol.Schema(
             {
@@ -547,6 +557,7 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
         return self.async_show_form(
             step_id="minimum_runtime",
             data_schema=schema,
+            errors=errors,
         )
 
     async def async_step_common_options(

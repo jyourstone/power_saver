@@ -1617,7 +1617,6 @@ class TestMinimumRuntimeStrategy:
             last_on_time=last_on,
         )
 
-        active = [s for s in schedule if s["status"] == "active"]
         # With ~33.5 hours of data remaining after now, and 4h off + 1h on cycle,
         # should schedule multiple blocks
         active_blocks = _find_active_blocks(schedule)

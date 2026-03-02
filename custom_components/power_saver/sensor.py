@@ -161,7 +161,11 @@ class LastActiveSensor(_DiagnosticBase):
         for s in self.coordinator.data.schedule:
             if s.get("status") != "active":
                 continue
-            slot_time = datetime.fromisoformat(s["time"])
+            try:
+                slot_time = datetime.fromisoformat(s["time"])
+            except (ValueError, KeyError) as exc:
+                _LOGGER.warning("Skipping malformed schedule entry: %s (%s)", s, exc)
+                continue
             if slot_time <= now:
                 last = slot_time
         return last

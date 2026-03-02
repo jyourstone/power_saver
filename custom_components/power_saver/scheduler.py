@@ -60,8 +60,13 @@ def _compute_similarity_threshold(
 
 def _parse_time(time_str: str) -> time:
     """Parse a time string (HH:MM or HH:MM:SS) into a time object."""
-    parts = time_str.split(":")
-    return time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+    try:
+        parts = time_str.split(":")
+        if len(parts) not in (2, 3):
+            raise ValueError(f"Expected HH:MM or HH:MM:SS, got {time_str!r}")
+        return time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+    except (ValueError, IndexError) as exc:
+        raise ValueError(f"Invalid time string: {time_str!r}") from exc
 
 
 def _is_excluded(
@@ -359,8 +364,13 @@ def _partition_into_periods(
     Returns:
         List of index groups, one per period, sorted by period start date.
     """
-    from_time = _parse_time(period_from)
-    to_time = _parse_time(period_to)
+    try:
+        from_time = _parse_time(period_from)
+        to_time = _parse_time(period_to)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid period time: {period_from}/{period_to}: {exc}"
+        ) from exc
     cross_midnight = to_time <= from_time
 
     period_groups: dict[object, list[int]] = {}

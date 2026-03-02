@@ -70,7 +70,8 @@
     },
     "error": {
       "nordpool_not_found": "Ingen Nord Pool-integration hittades. Konfigurera Nord Pool-integrationen (HACS eller inbyggd) innan du konfigurerar Power Saver.",
-      "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad."
+      "already_configured": "En Power Saver med detta namn och sensor är redan konfigurerad.",
+      "rolling_window_too_small": "Rullande fönster måste vara minst lika stort som minsta antal timmar på."
     },
     "abort": {
       "already_configured": "Denna Power Saver-instans är redan konfigurerad."

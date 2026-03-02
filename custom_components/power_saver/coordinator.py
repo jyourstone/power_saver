@@ -45,6 +45,7 @@ from .const import (
     STATE_FORCED_OFF,
     STATE_FORCED_ON,
     STATE_STANDBY,
+    STRATEGY_LOWEST_PRICE,
     STRATEGY_MINIMUM_RUNTIME,
     UPDATE_INTERVAL_MINUTES,
 )
@@ -68,7 +69,7 @@ class PowerSaverData:
     next_change: str | None = None
     active_slots: int = 0
     active_hours_in_period: float = 0.0
-    strategy: str = "lowest_price"
+    strategy: str = STRATEGY_LOWEST_PRICE
     emergency_mode: bool = False
 
 
@@ -174,6 +175,12 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         period_to = options.get(CONF_PERIOD_TO, DEFAULT_PERIOD_TO)
         rolling_window = options.get(CONF_ROLLING_WINDOW, DEFAULT_ROLLING_WINDOW)
         max_hours_off = rolling_window - min_hours
+        if max_hours_off < 0:
+            _LOGGER.warning(
+                "rolling_window (%s) < min_hours (%s); clamping max_hours_off to 0",
+                rolling_window, min_hours,
+            )
+            max_hours_off = 0
 
         # Load persisted state on first run
         if not self._state_loaded:
