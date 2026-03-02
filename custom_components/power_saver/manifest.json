@@ -12,5 +12,5 @@
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/jyourstone/power_saver/issues",
-  "version": "2.0.3"
+  "version": "3.0.0"
 }

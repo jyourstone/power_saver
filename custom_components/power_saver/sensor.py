@@ -24,13 +24,16 @@ async def async_setup_entry(
 ) -> None:
     """Set up Power Saver sensors from a config entry."""
     coordinator: PowerSaverCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
+
+    entities: list[SensorEntity] = [
         PowerSaverSensor(coordinator, entry),
         ScheduleSensor(coordinator, entry),
         LastActiveSensor(coordinator, entry),
-        ActiveHoursInWindowSensor(coordinator, entry),
+        ActiveHoursInPeriodSensor(coordinator, entry),
         NextChangeSensor(coordinator, entry),
-    ])
+    ]
+
+    async_add_entities(entities)
 
 
 class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
@@ -87,6 +90,7 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
             "min_price": data.min_price,
             "max_price": data.max_price,
             "active_slots": data.active_slots,
+            "strategy": data.strategy,
         }
 
 
@@ -139,7 +143,10 @@ class ScheduleSensor(_DiagnosticBase):
 
 
 class LastActiveSensor(_DiagnosticBase):
-    """Diagnostic sensor showing when the last active slot occurred."""
+    """Diagnostic sensor showing when the last active slot occurred.
+
+    Finds the most recent past active slot in the schedule.
+    """
 
     _attr_translation_key = "last_active"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -147,27 +154,32 @@ class LastActiveSensor(_DiagnosticBase):
     @property
     def native_value(self) -> datetime | None:
         """Return timestamp of last active slot."""
-        if (
-            self.coordinator.data is None
-            or self.coordinator.data.last_active_time is None
-        ):
+        if self.coordinator.data is None:
             return None
-        return datetime.fromisoformat(self.coordinator.data.last_active_time)
+        now = datetime.now().astimezone()
+        last = None
+        for s in self.coordinator.data.schedule:
+            if s.get("status") != "active":
+                continue
+            slot_time = datetime.fromisoformat(s["time"])
+            if slot_time <= now:
+                last = slot_time
+        return last
 
 
-class ActiveHoursInWindowSensor(_DiagnosticBase):
-    """Diagnostic sensor showing active hours within the rolling window."""
+class ActiveHoursInPeriodSensor(_DiagnosticBase):
+    """Diagnostic sensor showing active hours in the current schedule."""
 
-    _attr_translation_key = "active_hours_in_window"
+    _attr_translation_key = "active_hours_in_period"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.HOURS
 
     @property
     def native_value(self) -> float | None:
-        """Return active hours in the rolling window."""
+        """Return active hours in the schedule."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.active_hours_in_window
+        return self.coordinator.data.active_hours_in_period
 
 
 class NextChangeSensor(_DiagnosticBase):

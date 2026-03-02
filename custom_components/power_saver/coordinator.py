@@ -21,22 +21,31 @@ from .const import (
     CONF_CONTROLLED_ENTITIES,
     CONF_EXCLUDE_FROM,
     CONF_EXCLUDE_UNTIL,
+    CONF_ROLLING_WINDOW,
     CONF_MIN_CONSECUTIVE_HOURS,
-    CONF_MIN_HOURS,
+    CONF_HOURS_PER_PERIOD,
+    CONF_MIN_HOURS_ON,
     CONF_NORDPOOL_SENSOR,
     CONF_NORDPOOL_TYPE,
+    CONF_PERIOD_FROM,
+    CONF_PERIOD_TO,
     CONF_PRICE_SIMILARITY_PCT,
-    CONF_ROLLING_WINDOW_HOURS,
     CONF_SELECTION_MODE,
-    DEFAULT_MIN_HOURS,
-    DEFAULT_ROLLING_WINDOW_HOURS,
+    CONF_STRATEGY,
+    DEFAULT_ROLLING_WINDOW,
+    DEFAULT_HOURS_PER_PERIOD,
+    DEFAULT_MIN_HOURS_ON,
+    DEFAULT_PERIOD_FROM,
+    DEFAULT_PERIOD_TO,
     DEFAULT_SELECTION_MODE,
+    DEFAULT_STRATEGY,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
     STATE_ACTIVE,
     STATE_FORCED_OFF,
     STATE_FORCED_ON,
     STATE_STANDBY,
+    STRATEGY_MINIMUM_RUNTIME,
     UPDATE_INTERVAL_MINUTES,
 )
 from . import scheduler
@@ -58,8 +67,8 @@ class PowerSaverData:
     max_price: float | None = None
     next_change: str | None = None
     active_slots: int = 0
-    last_active_time: str | None = None
-    active_hours_in_window: float = 0.0
+    active_hours_in_period: float = 0.0
+    strategy: str = "lowest_price"
     emergency_mode: bool = False
 
 
@@ -80,8 +89,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._nordpool_entity = entry.data[CONF_NORDPOOL_SENSOR]
         self._nordpool_type = entry.data.get(CONF_NORDPOOL_TYPE, NORDPOOL_TYPE_HACS)
         self._store = Store(hass, STORAGE_VERSION, f"power_saver.{entry.entry_id}")
-        self._activity_history: list[str] = []
-        self._history_loaded = False
+        self._last_on_time: datetime | None = None
+        self._state_loaded = False
         self._unsub_nordpool: callback | None = None
         self._previous_state: str | None = None
         self._force_on: bool = False
@@ -148,22 +157,28 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
         # Read options
         options = self.config_entry.options
-        min_hours = options.get(CONF_MIN_HOURS, DEFAULT_MIN_HOURS)
+        strategy = options.get(CONF_STRATEGY, DEFAULT_STRATEGY)
+        if strategy == STRATEGY_MINIMUM_RUNTIME:
+            min_hours = options.get(CONF_MIN_HOURS_ON, DEFAULT_MIN_HOURS_ON)
+        else:
+            min_hours = options.get(CONF_HOURS_PER_PERIOD, DEFAULT_HOURS_PER_PERIOD)
         always_cheap = options.get(CONF_ALWAYS_CHEAP)
         always_expensive = options.get(CONF_ALWAYS_EXPENSIVE)
-        rolling_window_hours = options.get(
-            CONF_ROLLING_WINDOW_HOURS, DEFAULT_ROLLING_WINDOW_HOURS
-        )
         price_similarity_pct = options.get(CONF_PRICE_SIMILARITY_PCT)
         min_consecutive_hours = options.get(CONF_MIN_CONSECUTIVE_HOURS)
         selection_mode = options.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE)
         exclude_from = options.get(CONF_EXCLUDE_FROM)
         exclude_until = options.get(CONF_EXCLUDE_UNTIL)
+        # Strategy-specific options
+        period_from = options.get(CONF_PERIOD_FROM, DEFAULT_PERIOD_FROM)
+        period_to = options.get(CONF_PERIOD_TO, DEFAULT_PERIOD_TO)
+        rolling_window = options.get(CONF_ROLLING_WINDOW, DEFAULT_ROLLING_WINDOW)
+        max_hours_off = rolling_window - min_hours
 
-        # Load activity history from persistent storage on first run
-        if not self._history_loaded:
-            await self._async_load_history()
-            self._history_loaded = True
+        # Load persisted state on first run
+        if not self._state_loaded:
+            await self._async_load_state()
+            self._state_loaded = True
 
         # Emergency mode: no price data at all
         if not raw_today and not raw_tomorrow:
@@ -195,8 +210,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 schedule=emergency_schedule,
                 current_state=current_state,
                 active_slots=96,
-                last_active_time=now.isoformat(),
-                active_hours_in_window=24.0,
+                active_hours_in_period=24.0,
+                strategy=strategy,
                 emergency_mode=True,
             )
 
@@ -211,12 +226,18 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             raw_tomorrow=raw_tomorrow,
             min_hours=min_hours,
             now=now,
+            strategy=strategy,
+            # Lowest Price specific
+            period_from=period_from,
+            period_to=period_to,
+            min_consecutive_hours=min_consecutive_hours,
+            # Max Off Time specific
+            max_hours_off=max_hours_off,
+            last_on_time=self._last_on_time,
+            # Shared
             always_cheap=always_cheap,
             always_expensive=always_expensive,
-            rolling_window_hours=rolling_window_hours,
-            prev_activity_history=self._activity_history,
             price_similarity_pct=price_similarity_pct,
-            min_consecutive_hours=min_consecutive_hours,
             selection_mode=selection_mode,
             exclude_from=exclude_from,
             exclude_until=exclude_until,
@@ -264,27 +285,21 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         min_price = round(min(today_prices), 3) if today_prices else None
         max_price = round(max(today_prices), 3) if today_prices else None
 
-        # Update activity history and persist to storage
-        self._activity_history = scheduler.build_activity_history(
-            schedule, self._activity_history, now, rolling_window_hours
-        )
-        await self._async_save_history()
+        # Update last_on_time for Max Off Time strategy
+        if strategy == STRATEGY_MINIMUM_RUNTIME and current_state == STATE_ACTIVE:
+            self._last_on_time = now
 
-        # Compute active hours in the upcoming rolling window
-        window_start = now.replace(
-            minute=(now.minute // 15) * 15, second=0, microsecond=0
-        )
-        window_end = window_start + timedelta(hours=rolling_window_hours)
-        active_in_window = sum(
-            1 for s in schedule
-            if s.get("status") == STATE_ACTIVE
-            and window_start
-            <= datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
-            < window_end
-        )
-        active_hours_in_window = round(active_in_window / 4.0, 1)
-        last_active_time = self._activity_history[-1] if self._activity_history else None
+        # Persist state
+        await self._async_save_state()
+
+        # Compute active hours in period
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
+        if strategy == STRATEGY_MINIMUM_RUNTIME:
+            active_hours_in_period = round(active_slots / 4.0, 1)
+        else:
+            active_hours_in_period = scheduler.active_hours_in_current_period(
+                schedule, period_from, period_to, now
+            )
 
         # Force on/off mode: bypass schedule
         if self._force_on:
@@ -307,8 +322,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             max_price=max_price,
             next_change=next_change,
             active_slots=active_slots,
-            last_active_time=last_active_time,
-            active_hours_in_window=active_hours_in_window,
+            active_hours_in_period=active_hours_in_period,
+            strategy=strategy,
             emergency_mode=False,
         )
 
@@ -333,20 +348,15 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         except Exception:
             _LOGGER.exception("Failed to control entities %s", entities)
 
-    async def _async_load_history(self) -> None:
-        """Load activity history from persistent storage."""
+    async def _async_load_state(self) -> None:
+        """Load persisted state from storage."""
         try:
             data = await self._store.async_load()
-            if data and isinstance(data.get("activity_history"), list):
-                self._activity_history = data["activity_history"]
-                _LOGGER.info(
-                    "Loaded %d activity history entries from storage",
-                    len(self._activity_history),
-                )
-            else:
-                _LOGGER.debug("No previous activity history found in storage")
+            if not data:
+                _LOGGER.debug("No previous state found in storage")
+                return
             # Restore committed block start time
-            block_start_iso = data.get("active_block_start") if data else None
+            block_start_iso = data.get("active_block_start")
             if block_start_iso:
                 try:
                     self._active_block_start = datetime.fromisoformat(
@@ -358,24 +368,38 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                     )
                 except (ValueError, TypeError):
                     self._active_block_start = None
+            # Restore last_on_time for Max Off Time strategy
+            last_on_iso = data.get("last_on_time")
+            if last_on_iso:
+                try:
+                    self._last_on_time = datetime.fromisoformat(last_on_iso)
+                    _LOGGER.info(
+                        "Restored last_on_time: %s", last_on_iso,
+                    )
+                except (ValueError, TypeError):
+                    self._last_on_time = None
         except Exception:
-            _LOGGER.exception("Failed to load activity history from storage")
+            _LOGGER.exception("Failed to load state from storage")
 
-    async def _async_save_history(self) -> None:
-        """Save activity history to persistent storage."""
+    async def _async_save_state(self) -> None:
+        """Save state to persistent storage."""
         try:
             await self._store.async_save(
                 {
-                    "activity_history": self._activity_history,
                     "active_block_start": (
                         self._active_block_start.isoformat()
                         if self._active_block_start
                         else None
                     ),
+                    "last_on_time": (
+                        self._last_on_time.isoformat()
+                        if self._last_on_time
+                        else None
+                    ),
                 }
             )
         except Exception:
-            _LOGGER.exception("Failed to save activity history to storage")
+            _LOGGER.exception("Failed to save state to storage")
 
     async def async_shutdown(self) -> None:
         """Clean up listeners."""
