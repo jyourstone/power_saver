@@ -1545,12 +1545,13 @@ class TestMinimumRuntimeStrategy:
             always_expensive=4.00,
         )
 
-        # Expensive slots should not be activated via the candidate selection
-        # (emergency activation may override, but we gave a long max_hours_off)
+        # Expensive slots should not be activated (max_hours_off=8 and
+        # last_on only 2 h ago, so no emergency pressure exists).
         for s in schedule:
-            if s["price"] >= 4.00 and s["status"] == "active":
-                # This could happen only in emergency — verify block is needed
-                pass  # Acceptable in emergency mode
+            if s["price"] >= 4.00:
+                assert s["status"] != "active", (
+                    f"Expensive slot unexpectedly activated: {s}"
+                )
 
     def test_exclusion_zones(self, now, today_prices):
         """Excluded time ranges are respected."""
