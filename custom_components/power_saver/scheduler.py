@@ -827,11 +827,12 @@ def build_minimum_runtime_schedule(
         last_on_time.isoformat() if last_on_time else "None", inverted,
     )
 
-    # Find the first future slot index
+    # Find the first schedulable slot index (includes the current ongoing slot)
     future_start_idx = len(schedule)
     for i, s in enumerate(schedule):
         slot_time = datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
-        if slot_time >= now:
+        slot_end = slot_time + timedelta(minutes=15)
+        if slot_end > now:  # This slot hasn't ended yet
             future_start_idx = i
             break
 
@@ -849,6 +850,10 @@ def build_minimum_runtime_schedule(
             _LOGGER.warning("Deadline already passed — scheduling immediate activation")
         else:
             _LOGGER.debug("Next deadline: %s", next_deadline.isoformat())
+
+    # When overdue, the current ongoing slot must be activated immediately
+    # regardless of price sorting. Track this so the first window honours it.
+    overdue = next_deadline <= now
 
     # Iteratively fill rolling windows
     search_from = future_start_idx
@@ -882,13 +887,32 @@ def build_minimum_runtime_schedule(
                 continue
             candidates.append((i, price))
 
+        # When overdue, force-include the ongoing slot so it's never
+        # dropped by price sorting or always_expensive filtering.
+        forced_idx = None
+        if overdue and search_from == future_start_idx:
+            fsi = future_start_idx
+            if fsi < window_end_idx and schedule[fsi]["status"] == "standby":
+                if not any(idx == fsi for idx, _ in candidates):
+                    candidates.append((fsi, schedule[fsi]["price"]))
+                forced_idx = fsi
+
         # Sort by price (cheapest first, or most expensive first if inverted)
         candidates.sort(key=lambda x: x[1], reverse=inverted)
 
         # Activate the best slots up to the required count
         last_activated_time = None
         activated = 0
-        for idx, _ in candidates[:required_slots]:
+        selected = candidates[:required_slots]
+
+        # If the forced ongoing slot wasn't selected by price, swap it in
+        if forced_idx is not None:
+            selected_idxs = {idx for idx, _ in selected}
+            if forced_idx not in selected_idxs and selected:
+                # Replace the last (worst-priced) selected slot with the forced one
+                selected[-1] = (forced_idx, schedule[forced_idx]["price"])
+
+        for idx, _ in selected:
             schedule[idx]["status"] = "active"
             activated += 1
             slot_time = datetime.fromisoformat(schedule[idx]["time"]).astimezone(

@@ -1483,6 +1483,44 @@ class TestMinimumRuntimeStrategy:
             f"First active slot at {first_active} is before now ({now})"
         )
 
+    def test_mid_slot_now_includes_current_slot(self, today_prices):
+        """When now falls mid-slot, the current ongoing slot should be schedulable."""
+        # now at 14:37 — mid-way through the 14:30 slot
+        mid_slot_now = datetime(2026, 2, 6, 14, 37, 0, tzinfo=TZ)
+        last_on = mid_slot_now - timedelta(hours=6)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours_on=1.0,
+            now=mid_slot_now,
+            max_hours_off=6.0,
+            last_on_time=last_on,
+        )
+
+        # The current slot (14:30) should be a candidate — verify it can be active
+        current_slot = None
+        for s in schedule:
+            slot_time = datetime.fromisoformat(s["time"]).astimezone(TZ)
+            if slot_time <= mid_slot_now < slot_time + timedelta(minutes=15):
+                current_slot = s
+                break
+        assert current_slot is not None, "Current slot not found in schedule"
+        # The 14:30 slot should be schedulable (not forced to standby)
+        # Whether it's active depends on prices, but it must be considered.
+        # With the deadline at 14:37 (last_on + 6h = 08:37, which is past),
+        # the scheduler should activate immediately including the current slot.
+        active_slots = [s for s in schedule if s["status"] == "active"]
+        assert len(active_slots) >= 4  # 1 hour = 4 slots
+        # At least one active slot should be at or before the current slot time
+        earliest_active = min(
+            datetime.fromisoformat(s["time"]).astimezone(TZ) for s in active_slots
+        )
+        assert earliest_active <= mid_slot_now, (
+            f"Earliest active slot {earliest_active} is after now ({mid_slot_now}) — "
+            "current slot was not included in scheduling"
+        )
+
     def test_optimal_block_selection(self, now):
         """Should select the cheapest consecutive block before the deadline."""
         # Create prices with a clear cheap block at h16-16:45 and expensive elsewhere

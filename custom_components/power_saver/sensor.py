@@ -156,7 +156,11 @@ class LastActiveSensor(_DiagnosticBase):
 
     @property
     def native_value(self) -> datetime | None:
-        """Return timestamp of last active slot."""
+        """Return timestamp of last active slot.
+
+        Checks both the schedule (for past active slots) and the
+        coordinator's persisted last_on_time as a fallback.
+        """
         if self.coordinator.data is None:
             return None
         now = datetime.now().astimezone()
@@ -171,6 +175,15 @@ class LastActiveSensor(_DiagnosticBase):
                 continue
             if slot_time <= now:
                 last = slot_time
+        # Fallback to coordinator's persisted last_on_time (useful for
+        # Minimum Runtime where past slots aren't in the schedule)
+        persisted = self.coordinator.last_on_time
+        if persisted is not None:
+            # Normalize both to aware datetimes before comparing
+            aware_persisted = persisted.astimezone() if persisted.tzinfo is None else persisted
+            aware_last = last.astimezone() if last is not None and last.tzinfo is None else last
+            if aware_last is None or aware_persisted > aware_last:
+                last = persisted
         return last
 
 

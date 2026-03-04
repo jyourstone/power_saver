@@ -223,6 +223,7 @@ def test_last_active_sensor_native_value():
     tz = timezone(timedelta(hours=1))
     now = datetime(2026, 2, 6, 14, 30, tzinfo=tz)
     coordinator = MagicMock()
+    coordinator.last_on_time = None
     coordinator.data = PowerSaverData(
         schedule=[
             {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
@@ -243,6 +244,7 @@ def test_last_active_sensor_native_value():
 def test_last_active_sensor_no_data():
     """Test last active sensor returns None when no data."""
     coordinator = MagicMock()
+    coordinator.last_on_time = None
     coordinator.data = None
     sensor = LastActiveSensor(coordinator, make_config_entry())
     assert sensor.native_value is None
@@ -253,6 +255,7 @@ def test_last_active_sensor_no_past_active():
     tz = timezone(timedelta(hours=1))
     now = datetime(2026, 2, 6, 8, 0, tzinfo=tz)
     coordinator = MagicMock()
+    coordinator.last_on_time = None
     coordinator.data = PowerSaverData(
         schedule=[
             {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
@@ -264,6 +267,71 @@ def test_last_active_sensor_no_past_active():
         mock_dt.fromisoformat = datetime.fromisoformat
         result = sensor.native_value
     assert result is None
+
+
+def test_last_active_sensor_persisted_overrides_schedule():
+    """Test persisted last_on_time is used when it's later than schedule-derived value."""
+    tz = timezone(timedelta(hours=1))
+    now = datetime(2026, 2, 6, 14, 30, tzinfo=tz)
+    persisted_time = datetime(2026, 2, 6, 13, 0, tzinfo=tz)
+    coordinator = MagicMock()
+    coordinator.last_on_time = persisted_time
+    coordinator.data = PowerSaverData(
+        schedule=[
+            {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
+            {"price": 0.2, "time": "2026-02-06T12:00:00+01:00", "status": "active"},
+        ],
+    )
+    sensor = LastActiveSensor(coordinator, make_config_entry())
+    with patch("custom_components.power_saver.sensor.datetime") as mock_dt:
+        mock_dt.now.return_value = now
+        mock_dt.fromisoformat = datetime.fromisoformat
+        result = sensor.native_value
+    # persisted_time (13:00) is later than schedule-derived (12:00)
+    assert result == persisted_time
+
+
+def test_last_active_sensor_persisted_used_when_no_schedule_active():
+    """Test persisted last_on_time is used when schedule has no past active slots."""
+    tz = timezone(timedelta(hours=1))
+    now = datetime(2026, 2, 6, 8, 0, tzinfo=tz)
+    persisted_time = datetime(2026, 2, 6, 6, 0, tzinfo=tz)
+    coordinator = MagicMock()
+    coordinator.last_on_time = persisted_time
+    coordinator.data = PowerSaverData(
+        schedule=[
+            {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
+        ],
+    )
+    sensor = LastActiveSensor(coordinator, make_config_entry())
+    with patch("custom_components.power_saver.sensor.datetime") as mock_dt:
+        mock_dt.now.return_value = now
+        mock_dt.fromisoformat = datetime.fromisoformat
+        result = sensor.native_value
+    # No past active slots in schedule, persisted is used as fallback
+    assert result == persisted_time
+
+
+def test_last_active_sensor_schedule_wins_over_older_persisted():
+    """Test schedule-derived value is used when it's later than persisted."""
+    tz = timezone(timedelta(hours=1))
+    now = datetime(2026, 2, 6, 14, 30, tzinfo=tz)
+    persisted_time = datetime(2026, 2, 6, 9, 0, tzinfo=tz)
+    coordinator = MagicMock()
+    coordinator.last_on_time = persisted_time
+    coordinator.data = PowerSaverData(
+        schedule=[
+            {"price": 0.1, "time": "2026-02-06T12:00:00+01:00", "status": "active"},
+        ],
+    )
+    sensor = LastActiveSensor(coordinator, make_config_entry())
+    with patch("custom_components.power_saver.sensor.datetime") as mock_dt:
+        mock_dt.now.return_value = now
+        mock_dt.fromisoformat = datetime.fromisoformat
+        result = sensor.native_value
+    # Schedule-derived (12:00) is later than persisted (09:00)
+    expected = datetime(2026, 2, 6, 12, 0, tzinfo=tz)
+    assert result == expected
 
 
 # --- Active Hours in Period diagnostic sensor ---
