@@ -223,6 +223,7 @@ def test_last_active_sensor_native_value():
     tz = timezone(timedelta(hours=1))
     now = datetime(2026, 2, 6, 14, 30, tzinfo=tz)
     coordinator = MagicMock()
+    coordinator.last_on_time = None
     coordinator.data = PowerSaverData(
         schedule=[
             {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
@@ -243,6 +244,7 @@ def test_last_active_sensor_native_value():
 def test_last_active_sensor_no_data():
     """Test last active sensor returns None when no data."""
     coordinator = MagicMock()
+    coordinator.last_on_time = None
     coordinator.data = None
     sensor = LastActiveSensor(coordinator, make_config_entry())
     assert sensor.native_value is None
@@ -253,6 +255,7 @@ def test_last_active_sensor_no_past_active():
     tz = timezone(timedelta(hours=1))
     now = datetime(2026, 2, 6, 8, 0, tzinfo=tz)
     coordinator = MagicMock()
+    coordinator.last_on_time = None
     coordinator.data = PowerSaverData(
         schedule=[
             {"price": 0.1, "time": "2026-02-06T10:00:00+01:00", "status": "active"},

@@ -99,6 +99,11 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._active_block_start: datetime | None = None
 
     @property
+    def last_on_time(self) -> datetime | None:
+        """Return the last time the device was active."""
+        return self._last_on_time
+
+    @property
     def force_on_active(self) -> bool:
         """Return whether Always on is active."""
         return self._force_on

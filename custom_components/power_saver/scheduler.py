@@ -827,11 +827,12 @@ def build_minimum_runtime_schedule(
         last_on_time.isoformat() if last_on_time else "None", inverted,
     )
 
-    # Find the first future slot index
+    # Find the first schedulable slot index (includes the current ongoing slot)
     future_start_idx = len(schedule)
     for i, s in enumerate(schedule):
         slot_time = datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
-        if slot_time >= now:
+        slot_end = slot_time + timedelta(minutes=15)
+        if slot_end > now:  # This slot hasn't ended yet
             future_start_idx = i
             break
 
