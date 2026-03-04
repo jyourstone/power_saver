@@ -179,7 +179,10 @@ class LastActiveSensor(_DiagnosticBase):
         # Minimum Runtime where past slots aren't in the schedule)
         persisted = self.coordinator.last_on_time
         if persisted is not None:
-            if last is None or persisted > last:
+            # Normalize both to aware datetimes before comparing
+            aware_persisted = persisted.astimezone() if persisted.tzinfo is None else persisted
+            aware_last = last.astimezone() if last is not None and last.tzinfo is None else last
+            if aware_last is None or aware_persisted > aware_last:
                 last = persisted
         return last
 
