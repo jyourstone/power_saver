@@ -430,26 +430,32 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             # Restore locked schedule
             stored_schedule = data.get("locked_schedule")
             if stored_schedule:
-                now = dt_util.now()
-                last_slot_time = datetime.fromisoformat(
-                    stored_schedule[-1]["time"]
-                ).astimezone(now.tzinfo)
-                if now <= last_slot_time + timedelta(minutes=15):
-                    self._locked_schedule = stored_schedule
-                    self._schedule_has_tomorrow = data.get(
-                        "schedule_has_tomorrow", False
-                    )
-                    self._options_fingerprint = data.get(
-                        "options_fingerprint"
-                    )
-                    _LOGGER.info(
-                        "Restored locked schedule (%d slots, has_tomorrow=%s)",
-                        len(stored_schedule),
-                        self._schedule_has_tomorrow,
-                    )
-                else:
-                    _LOGGER.info(
-                        "Persisted schedule expired, will recompute"
+                try:
+                    self._validate_stored_schedule(stored_schedule)
+                    now = dt_util.now()
+                    last_slot_time = datetime.fromisoformat(
+                        stored_schedule[-1]["time"]
+                    ).astimezone(now.tzinfo)
+                    if now <= last_slot_time + timedelta(minutes=15):
+                        self._locked_schedule = stored_schedule
+                        self._schedule_has_tomorrow = data.get(
+                            "schedule_has_tomorrow", False
+                        )
+                        self._options_fingerprint = data.get(
+                            "options_fingerprint"
+                        )
+                        _LOGGER.info(
+                            "Restored locked schedule (%d slots, has_tomorrow=%s)",
+                            len(stored_schedule),
+                            self._schedule_has_tomorrow,
+                        )
+                    else:
+                        _LOGGER.info(
+                            "Persisted schedule expired, will recompute"
+                        )
+                except (KeyError, TypeError, ValueError) as err:
+                    _LOGGER.warning(
+                        "Discarding malformed stored schedule: %s", err,
                     )
             # Restore last_on_time for Minimum Runtime strategy
             last_on_iso = data.get("last_on_time")
