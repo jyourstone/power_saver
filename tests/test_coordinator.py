@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -195,8 +196,8 @@ class TestLockedSchedule:
             )
 
 
-class TestRecomputeTriggers:
-    """Tests for _should_recompute_schedule logic (tested via scheduler behavior)."""
+class TestScheduleExtension:
+    """Tests for schedule behavior when tomorrow prices are added."""
 
     def test_tomorrow_prices_extend_schedule(self, now, today_prices, tomorrow_prices):
         """Adding tomorrow prices should produce a longer schedule."""
@@ -236,3 +237,140 @@ class TestRecomputeTriggers:
         )
         active = [s for s in schedule if s["status"] == "active"]
         assert len(active) == 8  # 2.0 hours = 8 slots
+
+
+class TestShouldRecomputeSchedule:
+    """Tests for _should_recompute_schedule on the coordinator.
+
+    Uses a minimal mock of the coordinator to test the recompute decision
+    logic directly, covering all four trigger conditions.
+    """
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create a minimal mock that has the coordinator's recompute logic."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.entry_id = "test_123"
+        entry.data = {
+            "nordpool_sensor": "sensor.nordpool",
+            "nordpool_type": "hacs",
+        }
+        entry.options = {
+            "strategy": "lowest_price",
+            "hours_per_period": 2.5,
+        }
+
+        with patch(
+            "custom_components.power_saver.coordinator.Store"
+        ):
+            coord = PowerSaverCoordinator(hass, entry)
+        return coord
+
+    @pytest.fixture
+    def sample_schedule(self, now, today_prices):
+        """Build a sample schedule for use in recompute tests."""
+        return build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now,
+        )
+
+    def test_returns_true_when_no_locked_schedule(self, mock_coordinator, now):
+        """No locked schedule (first run) should trigger recompute."""
+        assert mock_coordinator._locked_schedule is None
+        assert mock_coordinator._should_recompute_schedule([], now) is True
+
+    def test_returns_true_when_tomorrow_prices_appear(
+        self, mock_coordinator, now, sample_schedule, tomorrow_prices
+    ):
+        """New tomorrow prices should trigger recompute."""
+        mock_coordinator._locked_schedule = sample_schedule
+        mock_coordinator._schedule_has_tomorrow = False
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        assert mock_coordinator._should_recompute_schedule(
+            tomorrow_prices, now
+        ) is True
+
+    def test_returns_true_when_schedule_expired(
+        self, mock_coordinator, sample_schedule
+    ):
+        """All slots in the past should trigger recompute."""
+        mock_coordinator._locked_schedule = sample_schedule
+        mock_coordinator._schedule_has_tomorrow = False
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        # Advance time past the last slot
+        last_slot = datetime.fromisoformat(sample_schedule[-1]["time"])
+        future = last_slot + timedelta(hours=1)
+
+        assert mock_coordinator._should_recompute_schedule([], future) is True
+
+    def test_returns_true_when_options_changed(
+        self, mock_coordinator, now, sample_schedule
+    ):
+        """Changed options (fingerprint mismatch) should trigger recompute."""
+        mock_coordinator._locked_schedule = sample_schedule
+        mock_coordinator._schedule_has_tomorrow = False
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        # Change an option that affects the schedule
+        mock_coordinator.config_entry.options = {
+            "strategy": "lowest_price",
+            "hours_per_period": 5.0,  # Changed from 2.5
+        }
+
+        assert mock_coordinator._should_recompute_schedule([], now) is True
+
+    def test_returns_false_when_nothing_changed(
+        self, mock_coordinator, now, sample_schedule
+    ):
+        """No trigger conditions → reuse existing schedule."""
+        mock_coordinator._locked_schedule = sample_schedule
+        mock_coordinator._schedule_has_tomorrow = False
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        assert mock_coordinator._should_recompute_schedule([], now) is False
+
+    def test_returns_false_when_tomorrow_already_included(
+        self, mock_coordinator, now, sample_schedule, tomorrow_prices
+    ):
+        """Tomorrow prices present but already incorporated → no recompute."""
+        mock_coordinator._locked_schedule = sample_schedule
+        mock_coordinator._schedule_has_tomorrow = True
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        assert mock_coordinator._should_recompute_schedule(
+            tomorrow_prices, now
+        ) is False
+
+    def test_controlled_entities_change_does_not_trigger_recompute(
+        self, mock_coordinator, now, sample_schedule
+    ):
+        """Changing controlled_entities should NOT trigger recompute."""
+        mock_coordinator._locked_schedule = sample_schedule
+        mock_coordinator._schedule_has_tomorrow = False
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        # Change only controlled_entities (not a schedule-affecting option)
+        opts = dict(mock_coordinator.config_entry.options)
+        opts["controlled_entities"] = ["switch.heater"]
+        mock_coordinator.config_entry.options = opts
+
+        assert mock_coordinator._should_recompute_schedule([], now) is False

@@ -766,13 +766,13 @@ def build_minimum_runtime_schedule(
         last_on_time.isoformat() if last_on_time else "None", inverted,
     )
 
-    # Find the first schedulable slot index (includes the current ongoing slot)
-    future_start_idx = len(schedule)
+    # Find the current ongoing slot index (for overdue force-activation)
+    current_slot_idx = len(schedule)
     for i, s in enumerate(schedule):
         slot_time = datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
         slot_end = slot_time + timedelta(minutes=15)
         if slot_end > now:  # This slot hasn't ended yet
-            future_start_idx = i
+            current_slot_idx = i
             break
 
     # Compute the first deadline (device must be on by this time)
@@ -794,8 +794,8 @@ def build_minimum_runtime_schedule(
     # regardless of price sorting. Track this so the first window honours it.
     overdue = next_deadline <= now
 
-    # Iteratively fill rolling windows
-    search_from = future_start_idx
+    # Schedule across the full horizon (locked schedule keeps past slots active)
+    search_from = 0
     windows_filled = 0
 
     while search_from < len(schedule):
@@ -829,12 +829,12 @@ def build_minimum_runtime_schedule(
         # When overdue, force-include the ongoing slot so it's never
         # dropped by price sorting or always_expensive filtering.
         forced_idx = None
-        if overdue and search_from == future_start_idx:
-            fsi = future_start_idx
-            if fsi < window_end_idx and schedule[fsi]["status"] == "standby":
-                if not any(idx == fsi for idx, _ in candidates):
-                    candidates.append((fsi, schedule[fsi]["price"]))
-                forced_idx = fsi
+        if overdue and current_slot_idx >= search_from and current_slot_idx < window_end_idx:
+            csi = current_slot_idx
+            if schedule[csi]["status"] == "standby":
+                if not any(idx == csi for idx, _ in candidates):
+                    candidates.append((csi, schedule[csi]["price"]))
+                forced_idx = csi
 
         # Sort by price (cheapest first, or most expensive first if inverted)
         candidates.sort(key=lambda x: x[1], reverse=inverted)
@@ -881,9 +881,15 @@ def build_minimum_runtime_schedule(
         windows_filled += 1
 
         # Next deadline: from end of last activated slot + max_hours_off
-        next_deadline = (
+        raw_deadline = (
             last_activated_time + timedelta(minutes=15) + timedelta(hours=max_hours_off)
         )
+        # Ensure deadline advances past the current window to avoid backward loops
+        # when past slots are activated in the locked schedule
+        window_end_slot_time = datetime.fromisoformat(
+            schedule[min(window_end_idx, len(schedule) - 1)]["time"]
+        ).astimezone(now.tzinfo)
+        next_deadline = max(raw_deadline, window_end_slot_time)
         search_from = window_end_idx
 
     # Apply always_cheap / always_expensive bonus activations

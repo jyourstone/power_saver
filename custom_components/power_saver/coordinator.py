@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import hashlib
+import json
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -98,6 +100,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._force_off: bool = False
         self._locked_schedule: list[dict] | None = None
         self._schedule_has_tomorrow: bool = False
+        self._options_fingerprint: str | None = None
 
     @property
     def last_on_time(self) -> datetime | None:
@@ -147,6 +150,30 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         _LOGGER.debug("Nord Pool sensor updated, requesting refresh")
         self.hass.async_create_task(self.async_request_refresh())
 
+    # Options that affect schedule computation (excludes CONF_CONTROLLED_ENTITIES)
+    _SCHEDULE_OPTIONS_KEYS = (
+        CONF_STRATEGY,
+        CONF_HOURS_PER_PERIOD,
+        CONF_MIN_HOURS_ON,
+        CONF_ALWAYS_CHEAP,
+        CONF_ALWAYS_EXPENSIVE,
+        CONF_PRICE_SIMILARITY_PCT,
+        CONF_MIN_CONSECUTIVE_HOURS,
+        CONF_SELECTION_MODE,
+        CONF_EXCLUDE_FROM,
+        CONF_EXCLUDE_UNTIL,
+        CONF_PERIOD_FROM,
+        CONF_PERIOD_TO,
+        CONF_ROLLING_WINDOW,
+    )
+
+    def _compute_options_fingerprint(self) -> str:
+        """Compute a deterministic fingerprint of schedule-affecting options."""
+        options = self.config_entry.options
+        relevant = {k: options.get(k) for k in self._SCHEDULE_OPTIONS_KEYS}
+        raw = json.dumps(relevant, sort_keys=True)
+        return hashlib.md5(raw.encode()).hexdigest()
+
     def _should_recompute_schedule(
         self, raw_tomorrow: list[dict], now: datetime
     ) -> bool:
@@ -156,9 +183,15 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         1. No locked schedule (first run or restart without persisted data)
         2. Tomorrow prices newly appeared
         3. All slots in the locked schedule are in the past (day rollover)
+        4. User options changed (fingerprint mismatch)
         """
         if self._locked_schedule is None:
             _LOGGER.info("No locked schedule, will compute")
+            return True
+
+        current_fingerprint = self._compute_options_fingerprint()
+        if current_fingerprint != self._options_fingerprint:
+            _LOGGER.info("Options changed, recomputing schedule")
             return True
 
         if raw_tomorrow and not self._schedule_has_tomorrow:
@@ -286,6 +319,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             )
             self._locked_schedule = schedule
             self._schedule_has_tomorrow = bool(raw_tomorrow)
+            self._options_fingerprint = self._compute_options_fingerprint()
             await self._async_save_state()
             _LOGGER.info(
                 "Schedule computed and locked (has_tomorrow=%s, slots=%d)",
@@ -398,6 +432,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                     self._schedule_has_tomorrow = data.get(
                         "schedule_has_tomorrow", False
                     )
+                    self._options_fingerprint = data.get(
+                        "options_fingerprint"
+                    )
                     _LOGGER.info(
                         "Restored locked schedule (%d slots, has_tomorrow=%s)",
                         len(stored_schedule),
@@ -427,6 +464,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 {
                     "locked_schedule": self._locked_schedule,
                     "schedule_has_tomorrow": self._schedule_has_tomorrow,
+                    "options_fingerprint": self._options_fingerprint,
                     "last_on_time": (
                         self._last_on_time.isoformat()
                         if self._last_on_time
@@ -438,7 +476,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER.exception("Failed to save state to storage")
 
     async def async_shutdown(self) -> None:
-        """Clean up listeners."""
+        """Clean up listeners and persist state."""
+        await self._async_save_state()
         if self._unsub_nordpool:
             self._unsub_nordpool()
             self._unsub_nordpool = None

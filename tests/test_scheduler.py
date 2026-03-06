@@ -1469,18 +1469,15 @@ class TestMinimumRuntimeStrategy:
         active = [s for s in schedule if s["status"] == "active"]
         assert len(active) >= 4
 
-        active_times = sorted(
-            datetime.fromisoformat(s["time"]).astimezone(TZ) for s in active
-        )
-        first_active = active_times[0]
+        # Verify at least one active slot exists within the first deadline window
         deadline = now + timedelta(hours=8)
-        # Block must start before the deadline
-        assert first_active < deadline, (
-            f"First active slot at {first_active} is after deadline ({deadline})"
-        )
-        # Block should be at the cheapest time, not necessarily immediately
-        assert first_active >= now, (
-            f"First active slot at {first_active} is before now ({now})"
+        slots_before_deadline = [
+            s for s in active
+            if datetime.fromisoformat(s["time"]).astimezone(TZ) < deadline
+        ]
+        assert len(slots_before_deadline) >= 4, (
+            f"Expected at least 4 active slots before deadline ({deadline}), "
+            f"got {len(slots_before_deadline)}"
         )
 
     def test_mid_slot_now_includes_current_slot(self, today_prices):
