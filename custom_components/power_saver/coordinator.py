@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import hashlib
+import json
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -54,7 +56,7 @@ from .nordpool_adapter import async_get_prices
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 
 
 @dataclass
@@ -96,7 +98,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._previous_state: str | None = None
         self._force_on: bool = False
         self._force_off: bool = False
-        self._active_block_start: datetime | None = None
+        self._locked_schedule: list[dict] | None = None
+        self._schedule_has_tomorrow: bool = False
+        self._options_fingerprint: str | None = None
 
     @property
     def last_on_time(self) -> datetime | None:
@@ -145,6 +149,71 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         """Handle Nord Pool sensor state change."""
         _LOGGER.debug("Nord Pool sensor updated, requesting refresh")
         self.hass.async_create_task(self.async_request_refresh())
+
+    # Options that affect schedule computation (excludes CONF_CONTROLLED_ENTITIES)
+    _SCHEDULE_OPTIONS_KEYS = (
+        CONF_STRATEGY,
+        CONF_HOURS_PER_PERIOD,
+        CONF_MIN_HOURS_ON,
+        CONF_ALWAYS_CHEAP,
+        CONF_ALWAYS_EXPENSIVE,
+        CONF_PRICE_SIMILARITY_PCT,
+        CONF_MIN_CONSECUTIVE_HOURS,
+        CONF_SELECTION_MODE,
+        CONF_EXCLUDE_FROM,
+        CONF_EXCLUDE_UNTIL,
+        CONF_PERIOD_FROM,
+        CONF_PERIOD_TO,
+        CONF_ROLLING_WINDOW,
+    )
+
+    def _compute_options_fingerprint(self) -> str:
+        """Compute a deterministic fingerprint of schedule-affecting options."""
+        options = self.config_entry.options
+        relevant = {k: options.get(k) for k in self._SCHEDULE_OPTIONS_KEYS}
+        raw = json.dumps(relevant, sort_keys=True)
+        return hashlib.md5(raw.encode()).hexdigest()
+
+    def _should_recompute_schedule(
+        self, raw_tomorrow: list[dict], now: datetime
+    ) -> bool:
+        """Determine whether the locked schedule needs recomputing.
+
+        Recompute triggers:
+        1. No locked schedule (first run or restart without persisted data)
+        2. Tomorrow prices newly appeared
+        3. All slots in the locked schedule are in the past (day rollover)
+        4. User options changed (fingerprint mismatch)
+        """
+        if not self._locked_schedule:
+            _LOGGER.info("No locked schedule, will compute")
+            return True
+
+        current_fingerprint = self._compute_options_fingerprint()
+        if current_fingerprint != self._options_fingerprint:
+            _LOGGER.info("Options changed, recomputing schedule")
+            return True
+
+        if raw_tomorrow and not self._schedule_has_tomorrow:
+            _LOGGER.info("Tomorrow prices now available, recomputing schedule")
+            return True
+
+        # Check if the schedule has expired (all slots in the past)
+        try:
+            last_slot_time = datetime.fromisoformat(
+                self._locked_schedule[-1]["time"]
+            ).astimezone(now.tzinfo)
+        except (KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Malformed last slot in locked schedule, recomputing: %s", exc
+            )
+            return True
+
+        if now > last_slot_time + timedelta(minutes=15):
+            _LOGGER.info("Locked schedule expired (all slots in past), recomputing")
+            return True
+
+        return False
 
     async def _async_update_data(self) -> PowerSaverData:
         """Fetch data from Nord Pool sensor and compute schedule."""
@@ -232,28 +301,39 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER.warning("No price data for today from Nord Pool sensor")
             raise UpdateFailed("No price data available for today")
 
-        # Build schedule
-        schedule = scheduler.build_schedule(
-            raw_today=raw_today,
-            raw_tomorrow=raw_tomorrow,
-            min_hours=min_hours,
-            now=now,
-            strategy=strategy,
-            # Lowest Price specific
-            period_from=period_from,
-            period_to=period_to,
-            min_consecutive_hours=min_consecutive_hours,
-            # Max Off Time specific
-            max_hours_off=max_hours_off,
-            last_on_time=self._last_on_time,
-            # Shared
-            always_cheap=always_cheap,
-            always_expensive=always_expensive,
-            price_similarity_pct=price_similarity_pct,
-            selection_mode=selection_mode,
-            exclude_from=exclude_from,
-            exclude_until=exclude_until,
-        )
+        # Compute or reuse locked schedule
+        if self._should_recompute_schedule(raw_tomorrow, now):
+            schedule = scheduler.build_schedule(
+                raw_today=raw_today,
+                raw_tomorrow=raw_tomorrow,
+                min_hours=min_hours,
+                now=now,
+                strategy=strategy,
+                # Lowest Price specific
+                period_from=period_from,
+                period_to=period_to,
+                min_consecutive_hours=min_consecutive_hours,
+                # Max Off Time specific
+                max_hours_off=max_hours_off,
+                last_on_time=self._last_on_time,
+                # Shared
+                always_cheap=always_cheap,
+                always_expensive=always_expensive,
+                price_similarity_pct=price_similarity_pct,
+                selection_mode=selection_mode,
+                exclude_from=exclude_from,
+                exclude_until=exclude_until,
+            )
+            self._locked_schedule = schedule
+            self._schedule_has_tomorrow = bool(raw_tomorrow)
+            self._options_fingerprint = self._compute_options_fingerprint()
+            await self._async_save_state()
+            _LOGGER.info(
+                "Schedule computed and locked (has_tomorrow=%s, slots=%d)",
+                self._schedule_has_tomorrow, len(schedule),
+            )
+        else:
+            schedule = self._locked_schedule
 
         # Find current slot
         current_slot = scheduler.find_current_slot(schedule, now)
@@ -264,31 +344,6 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             current_state = STATE_STANDBY
             current_price = None
 
-        # Committed block protection: once the appliance turns on, keep it
-        # active for the full min_consecutive_hours to prevent 15-minute
-        # schedule recalculations from fragmenting consecutive blocks.
-        effective_consecutive = (
-            min(min_consecutive_hours, min_hours)
-            if min_consecutive_hours
-            else 0
-        )
-        if not self._force_off and not self._force_on:
-            current_state, self._active_block_start = (
-                scheduler.apply_committed_block_protection(
-                    current_state=current_state,
-                    active_block_start=self._active_block_start,
-                    now=now,
-                    effective_consecutive_hours=effective_consecutive,
-                    current_price=current_price,
-                    always_expensive=always_expensive,
-                    always_cheap=always_cheap,
-                    inverted=selection_mode == "most_expensive",
-                    current_slot=current_slot,
-                )
-            )
-        elif self._active_block_start is not None:
-            self._active_block_start = None
-
         # Find next state change
         next_change = scheduler.find_next_change(schedule, current_slot, now)
 
@@ -297,12 +352,17 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         min_price = round(min(today_prices), 3) if today_prices else None
         max_price = round(max(today_prices), 3) if today_prices else None
 
-        # Update last_on_time for Max Off Time strategy
+        # Update last_on_time for Minimum Runtime strategy
         if strategy == STRATEGY_MINIMUM_RUNTIME and current_state == STATE_ACTIVE:
             self._last_on_time = now
 
-        # Persist state
-        await self._async_save_state()
+        # Save last_on_time on active→non-active transitions
+        if (
+            strategy == STRATEGY_MINIMUM_RUNTIME
+            and self._previous_state == STATE_ACTIVE
+            and current_state != STATE_ACTIVE
+        ):
+            await self._async_save_state()
 
         # Compute active hours in period
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
@@ -360,6 +420,22 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         except Exception:
             _LOGGER.exception("Failed to control entities %s", entities)
 
+    @staticmethod
+    def _validate_stored_schedule(schedule: list[dict]) -> None:
+        """Validate that every slot in a stored schedule has required fields.
+
+        Raises KeyError, TypeError, or ValueError if any slot is malformed.
+        """
+        if not isinstance(schedule, list) or not schedule:
+            raise TypeError("Schedule must be a non-empty list")
+        for i, slot in enumerate(schedule):
+            if not isinstance(slot, dict):
+                raise TypeError(f"Slot {i} is not a dict")
+            time_str = slot["time"]  # KeyError if missing
+            datetime.fromisoformat(time_str)  # ValueError if unparseable
+            if "status" not in slot:
+                raise KeyError(f"Slot {i} missing 'status' field")
+
     async def _async_load_state(self) -> None:
         """Load persisted state from storage."""
         try:
@@ -367,20 +443,37 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             if not data:
                 _LOGGER.debug("No previous state found in storage")
                 return
-            # Restore committed block start time
-            block_start_iso = data.get("active_block_start")
-            if block_start_iso:
+            # Restore locked schedule
+            stored_schedule = data.get("locked_schedule")
+            if stored_schedule:
                 try:
-                    self._active_block_start = datetime.fromisoformat(
-                        block_start_iso
+                    self._validate_stored_schedule(stored_schedule)
+                    now = dt_util.now()
+                    last_slot_time = datetime.fromisoformat(
+                        stored_schedule[-1]["time"]
+                    ).astimezone(now.tzinfo)
+                    if now <= last_slot_time + timedelta(minutes=15):
+                        self._locked_schedule = stored_schedule
+                        self._schedule_has_tomorrow = data.get(
+                            "schedule_has_tomorrow", False
+                        )
+                        self._options_fingerprint = data.get(
+                            "options_fingerprint"
+                        )
+                        _LOGGER.info(
+                            "Restored locked schedule (%d slots, has_tomorrow=%s)",
+                            len(stored_schedule),
+                            self._schedule_has_tomorrow,
+                        )
+                    else:
+                        _LOGGER.info(
+                            "Persisted schedule expired, will recompute"
+                        )
+                except (KeyError, TypeError, ValueError) as err:
+                    _LOGGER.warning(
+                        "Discarding malformed stored schedule: %s", err,
                     )
-                    _LOGGER.info(
-                        "Restored committed block start: %s",
-                        block_start_iso,
-                    )
-                except (ValueError, TypeError):
-                    self._active_block_start = None
-            # Restore last_on_time for Max Off Time strategy
+            # Restore last_on_time for Minimum Runtime strategy
             last_on_iso = data.get("last_on_time")
             if last_on_iso:
                 try:
@@ -398,11 +491,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         try:
             await self._store.async_save(
                 {
-                    "active_block_start": (
-                        self._active_block_start.isoformat()
-                        if self._active_block_start
-                        else None
-                    ),
+                    "locked_schedule": self._locked_schedule,
+                    "schedule_has_tomorrow": self._schedule_has_tomorrow,
+                    "options_fingerprint": self._options_fingerprint,
                     "last_on_time": (
                         self._last_on_time.isoformat()
                         if self._last_on_time
@@ -414,7 +505,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER.exception("Failed to save state to storage")
 
     async def async_shutdown(self) -> None:
-        """Clean up listeners."""
+        """Clean up listeners and persist state."""
+        await self._async_save_state()
         if self._unsub_nordpool:
             self._unsub_nordpool()
             self._unsub_nordpool = None
