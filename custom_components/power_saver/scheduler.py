@@ -487,10 +487,13 @@ def _enforce_min_consecutive(
     inverted: bool = False,
     always_cheap: float | None = None,
 ) -> list[dict]:
-    """Ensure all future active blocks are at least min_consecutive_hours long.
+    """Ensure all active blocks are at least min_consecutive_hours long.
 
-    Consolidates short future blocks by deactivating their slots and
-    re-allocating them into the best consecutive future windows.
+    Consolidates short blocks by deactivating their slots and
+    re-allocating them into the best consecutive windows.
+
+    The schedule is computed once and locked, so there is no past/future
+    boundary distinction — all blocks are treated uniformly.
 
     In normal mode: never activates slots at or above always_expensive.
     In inverted mode: never activates slots at or below always_cheap.
@@ -500,7 +503,7 @@ def _enforce_min_consecutive(
         min_consecutive_hours: Minimum consecutive hours per active block.
         min_hours: Overall minimum hours (caps the consecutive requirement).
         always_expensive: Price threshold; in normal mode, slots at/above are never activated.
-        now: Current datetime (timezone-aware). Only future slots are consolidated.
+        now: Current datetime (timezone-aware). Kept for interface compatibility.
         inverted: If True, use inverted selection logic.
         always_cheap: Price threshold; in inverted mode, slots at/below are never activated.
 
@@ -522,80 +525,17 @@ def _enforce_min_consecutive(
         effective_slots, effective_hours,
     )
 
-    # Find the future slot range
-    future_start_idx = 0
-    found_future = False
-    for i, s in enumerate(schedule):
-        slot_time = datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
-        if not found_future and slot_time >= now:
-            future_start_idx = i
-            found_future = True
-            break
-    if not found_future:
-        return schedule
-
-    # Protect in-progress blocks: count trailing active slots before now
-    trailing_past_active = 0
-    idx = future_start_idx - 1
-    while idx >= 0:
-        slot = schedule[idx]
-        slot_status = slot.get("status")
-        if slot_status == "excluded":
-            break
-        if slot_status == "active":
-            trailing_past_active += 1
-            idx -= 1
-        else:
-            break
-
-    _LOGGER.debug(
-        "In-progress block detection: trailing_past_active=%d, effective_slots=%d",
-        trailing_past_active, effective_slots,
-    )
-
-    # Extend in-progress block into future if needed
-    if 0 < trailing_past_active < effective_slots:
-        needed_extension = effective_slots - trailing_past_active
-        extended = 0
-        for i in range(
-            future_start_idx,
-            min(future_start_idx + needed_extension, len(schedule)),
-        ):
-            slot = schedule[i]
-            if slot.get("status") == "excluded":
-                break
-            price = slot.get("price", 0)
-            if not inverted and always_expensive is not None and price >= always_expensive:
-                break
-            if inverted and always_cheap is not None and price <= always_cheap:
-                break
-            if slot.get("status") != "active":
-                slot["status"] = "active"
-                extended += 1
-        if extended > 0:
-            _LOGGER.debug(
-                "Protected in-progress block: extended %d past active slots "
-                "with %d future slots to meet min consecutive",
-                trailing_past_active, extended,
-            )
-
-    # Find short blocks that are entirely in the future
+    # Find all short blocks
     blocks = _find_active_blocks(schedule)
     short_blocks = [
         (start, length) for start, length in blocks
         if length < effective_slots
-        and start >= future_start_idx
-        and not (
-            start == future_start_idx
-            and trailing_past_active > 0
-            and trailing_past_active + length >= effective_slots
-        )
     ]
 
     if not short_blocks:
         return schedule
 
-    # Deactivate all slots in short future blocks to free them for consolidation
+    # Deactivate all slots in short blocks to free them for consolidation
     freed = 0
     for block_start, block_len in short_blocks:
         for i in range(block_start, block_start + block_len):
@@ -604,14 +544,13 @@ def _enforce_min_consecutive(
                 freed += 1
 
     _LOGGER.debug(
-        "Deactivated %d future slots from %d short blocks for consolidation",
+        "Deactivated %d slots from %d short blocks for consolidation",
         freed, len(short_blocks),
     )
 
-    # Find candidate consecutive windows
+    # Find candidate consecutive windows across the entire schedule
     candidates = _find_consecutive_candidates(
         schedule, effective_slots, always_expensive, always_cheap, inverted,
-        start_idx=future_start_idx, end_idx=len(schedule),
     )
 
     activated_indices: set[int] = set()
@@ -1122,113 +1061,3 @@ def find_next_change(
     return None
 
 
-# ---------------------------------------------------------------------------
-# Committed block protection
-# ---------------------------------------------------------------------------
-
-def apply_committed_block_protection(
-    current_state: str,
-    active_block_start: datetime | None,
-    now: datetime,
-    effective_consecutive_hours: float,
-    current_price: float | None,
-    always_expensive: float | None,
-    always_cheap: float | None,
-    inverted: bool,
-    current_slot: dict | None,
-) -> tuple[str, datetime | None]:
-    """Ensure an appliance stays active for the full committed duration.
-
-    Once an appliance turns on, this function guarantees it remains active for
-    the committed duration to prevent 15-minute schedule recalculations from
-    fragmenting consecutive blocks.
-
-    Args:
-        current_state: Current slot state ("active", "standby", "excluded").
-        active_block_start: When the current committed block started, or None.
-        now: Current datetime (timezone-aware).
-        effective_consecutive_hours: The committed on-duration.
-            Pass 0 if feature is disabled.
-        current_price: Price of the current slot.
-        always_expensive: Always-expensive price threshold (cheapest mode).
-        always_cheap: Always-cheap price threshold (most_expensive mode).
-        inverted: True when selection_mode is "most_expensive".
-        current_slot: Current schedule slot dict (modified in-place if
-            state is overridden).
-
-    Returns:
-        (new_current_state, new_active_block_start) tuple.
-    """
-    if effective_consecutive_hours <= 0:
-        return current_state, None
-
-    if current_state == "active":
-        if active_block_start is None:
-            # New committed block starts now
-            active_block_start = now
-            _LOGGER.debug(
-                "Committed block started at %s (duration: %.1fh)",
-                now.isoformat(),
-                effective_consecutive_hours,
-            )
-        return current_state, active_block_start
-
-    # State is not active — check if we're within a committed block
-    if active_block_start is None:
-        return current_state, None
-
-    # Excluded slots always end a committed block immediately
-    if current_state == "excluded":
-        _LOGGER.info(
-            "Committed block ended: slot is excluded (started %s)",
-            active_block_start.isoformat(),
-        )
-        return current_state, None
-
-    committed_end = active_block_start + timedelta(
-        hours=effective_consecutive_hours
-    )
-
-    if now >= committed_end:
-        # Committed block has completed its full duration
-        _LOGGER.debug(
-            "Committed block completed (started %s)",
-            active_block_start.isoformat(),
-        )
-        return current_state, None
-
-    # Still within committed duration — check price constraints
-    price_blocked = False
-    if (
-        not inverted
-        and always_expensive is not None
-        and current_price is not None
-        and current_price >= always_expensive
-    ):
-        price_blocked = True
-    elif (
-        inverted
-        and always_cheap is not None
-        and current_price is not None
-        and current_price <= always_cheap
-    ):
-        price_blocked = True
-
-    if price_blocked:
-        _LOGGER.info(
-            "Committed block ended early: price constraint at %.3f (started %s)",
-            current_price,
-            active_block_start.isoformat(),
-        )
-        return current_state, None
-
-    # Override: keep active for the remaining committed duration
-    remaining_min = (committed_end - now).total_seconds() / 60
-    _LOGGER.info(
-        "Committed block protection: keeping active (%.0f min remaining, started %s)",
-        remaining_min,
-        active_block_start.isoformat(),
-    )
-    if current_slot is not None:
-        current_slot["status"] = "active"
-    return "active", active_block_start

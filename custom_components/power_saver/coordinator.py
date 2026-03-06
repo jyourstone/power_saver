@@ -54,7 +54,7 @@ from .nordpool_adapter import async_get_prices
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 
 
 @dataclass
@@ -96,7 +96,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._previous_state: str | None = None
         self._force_on: bool = False
         self._force_off: bool = False
-        self._active_block_start: datetime | None = None
+        self._locked_schedule: list[dict] | None = None
+        self._schedule_has_tomorrow: bool = False
 
     @property
     def last_on_time(self) -> datetime | None:
@@ -145,6 +146,34 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         """Handle Nord Pool sensor state change."""
         _LOGGER.debug("Nord Pool sensor updated, requesting refresh")
         self.hass.async_create_task(self.async_request_refresh())
+
+    def _should_recompute_schedule(
+        self, raw_tomorrow: list[dict], now: datetime
+    ) -> bool:
+        """Determine whether the locked schedule needs recomputing.
+
+        Recompute triggers:
+        1. No locked schedule (first run or restart without persisted data)
+        2. Tomorrow prices newly appeared
+        3. All slots in the locked schedule are in the past (day rollover)
+        """
+        if self._locked_schedule is None:
+            _LOGGER.info("No locked schedule, will compute")
+            return True
+
+        if raw_tomorrow and not self._schedule_has_tomorrow:
+            _LOGGER.info("Tomorrow prices now available, recomputing schedule")
+            return True
+
+        # Check if the schedule has expired (all slots in the past)
+        last_slot_time = datetime.fromisoformat(
+            self._locked_schedule[-1]["time"]
+        ).astimezone(now.tzinfo)
+        if now > last_slot_time + timedelta(minutes=15):
+            _LOGGER.info("Locked schedule expired (all slots in past), recomputing")
+            return True
+
+        return False
 
     async def _async_update_data(self) -> PowerSaverData:
         """Fetch data from Nord Pool sensor and compute schedule."""
@@ -232,28 +261,38 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER.warning("No price data for today from Nord Pool sensor")
             raise UpdateFailed("No price data available for today")
 
-        # Build schedule
-        schedule = scheduler.build_schedule(
-            raw_today=raw_today,
-            raw_tomorrow=raw_tomorrow,
-            min_hours=min_hours,
-            now=now,
-            strategy=strategy,
-            # Lowest Price specific
-            period_from=period_from,
-            period_to=period_to,
-            min_consecutive_hours=min_consecutive_hours,
-            # Max Off Time specific
-            max_hours_off=max_hours_off,
-            last_on_time=self._last_on_time,
-            # Shared
-            always_cheap=always_cheap,
-            always_expensive=always_expensive,
-            price_similarity_pct=price_similarity_pct,
-            selection_mode=selection_mode,
-            exclude_from=exclude_from,
-            exclude_until=exclude_until,
-        )
+        # Compute or reuse locked schedule
+        if self._should_recompute_schedule(raw_tomorrow, now):
+            schedule = scheduler.build_schedule(
+                raw_today=raw_today,
+                raw_tomorrow=raw_tomorrow,
+                min_hours=min_hours,
+                now=now,
+                strategy=strategy,
+                # Lowest Price specific
+                period_from=period_from,
+                period_to=period_to,
+                min_consecutive_hours=min_consecutive_hours,
+                # Max Off Time specific
+                max_hours_off=max_hours_off,
+                last_on_time=self._last_on_time,
+                # Shared
+                always_cheap=always_cheap,
+                always_expensive=always_expensive,
+                price_similarity_pct=price_similarity_pct,
+                selection_mode=selection_mode,
+                exclude_from=exclude_from,
+                exclude_until=exclude_until,
+            )
+            self._locked_schedule = schedule
+            self._schedule_has_tomorrow = bool(raw_tomorrow)
+            await self._async_save_state()
+            _LOGGER.info(
+                "Schedule computed and locked (has_tomorrow=%s, slots=%d)",
+                self._schedule_has_tomorrow, len(schedule),
+            )
+        else:
+            schedule = self._locked_schedule
 
         # Find current slot
         current_slot = scheduler.find_current_slot(schedule, now)
@@ -264,31 +303,6 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             current_state = STATE_STANDBY
             current_price = None
 
-        # Committed block protection: once the appliance turns on, keep it
-        # active for the full min_consecutive_hours to prevent 15-minute
-        # schedule recalculations from fragmenting consecutive blocks.
-        effective_consecutive = (
-            min(min_consecutive_hours, min_hours)
-            if min_consecutive_hours
-            else 0
-        )
-        if not self._force_off and not self._force_on:
-            current_state, self._active_block_start = (
-                scheduler.apply_committed_block_protection(
-                    current_state=current_state,
-                    active_block_start=self._active_block_start,
-                    now=now,
-                    effective_consecutive_hours=effective_consecutive,
-                    current_price=current_price,
-                    always_expensive=always_expensive,
-                    always_cheap=always_cheap,
-                    inverted=selection_mode == "most_expensive",
-                    current_slot=current_slot,
-                )
-            )
-        elif self._active_block_start is not None:
-            self._active_block_start = None
-
         # Find next state change
         next_change = scheduler.find_next_change(schedule, current_slot, now)
 
@@ -297,12 +311,17 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         min_price = round(min(today_prices), 3) if today_prices else None
         max_price = round(max(today_prices), 3) if today_prices else None
 
-        # Update last_on_time for Max Off Time strategy
+        # Update last_on_time for Minimum Runtime strategy
         if strategy == STRATEGY_MINIMUM_RUNTIME and current_state == STATE_ACTIVE:
             self._last_on_time = now
 
-        # Persist state
-        await self._async_save_state()
+        # Save last_on_time on active→non-active transitions
+        if (
+            strategy == STRATEGY_MINIMUM_RUNTIME
+            and self._previous_state == STATE_ACTIVE
+            and current_state != STATE_ACTIVE
+        ):
+            await self._async_save_state()
 
         # Compute active hours in period
         active_slots = sum(1 for s in schedule if s.get("status") == STATE_ACTIVE)
@@ -367,20 +386,28 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             if not data:
                 _LOGGER.debug("No previous state found in storage")
                 return
-            # Restore committed block start time
-            block_start_iso = data.get("active_block_start")
-            if block_start_iso:
-                try:
-                    self._active_block_start = datetime.fromisoformat(
-                        block_start_iso
+            # Restore locked schedule
+            stored_schedule = data.get("locked_schedule")
+            if stored_schedule:
+                now = dt_util.now()
+                last_slot_time = datetime.fromisoformat(
+                    stored_schedule[-1]["time"]
+                ).astimezone(now.tzinfo)
+                if now <= last_slot_time + timedelta(minutes=15):
+                    self._locked_schedule = stored_schedule
+                    self._schedule_has_tomorrow = data.get(
+                        "schedule_has_tomorrow", False
                     )
                     _LOGGER.info(
-                        "Restored committed block start: %s",
-                        block_start_iso,
+                        "Restored locked schedule (%d slots, has_tomorrow=%s)",
+                        len(stored_schedule),
+                        self._schedule_has_tomorrow,
                     )
-                except (ValueError, TypeError):
-                    self._active_block_start = None
-            # Restore last_on_time for Max Off Time strategy
+                else:
+                    _LOGGER.info(
+                        "Persisted schedule expired, will recompute"
+                    )
+            # Restore last_on_time for Minimum Runtime strategy
             last_on_iso = data.get("last_on_time")
             if last_on_iso:
                 try:
@@ -398,11 +425,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         try:
             await self._store.async_save(
                 {
-                    "active_block_start": (
-                        self._active_block_start.isoformat()
-                        if self._active_block_start
-                        else None
-                    ),
+                    "locked_schedule": self._locked_schedule,
+                    "schedule_has_tomorrow": self._schedule_has_tomorrow,
                     "last_on_time": (
                         self._last_on_time.isoformat()
                         if self._last_on_time

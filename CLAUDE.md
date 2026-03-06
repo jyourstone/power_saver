@@ -52,7 +52,7 @@ custom_components/power_saver/
 ### Key Components
 
 - **scheduler.py** — Pure functions, no HA imports. Two strategies: `build_lowest_price_schedule()` (per-period optimization) and `build_minimum_runtime_schedule()` (rolling-window slot selection). `build_schedule()` is a thin dispatcher. Testable in isolation.
-- **coordinator.py** — `PowerSaverCoordinator` extends `DataUpdateCoordinator`. Fetches Nord Pool data every 15 min, dispatches to appropriate strategy, controls target entities on state changes. Persists `active_block_start` and `last_on_time`.
+- **coordinator.py** — `PowerSaverCoordinator` extends `DataUpdateCoordinator`. Fetches Nord Pool data every 15 min, computes the schedule once and locks it (recomputes only when new prices arrive, settings change, or schedule expires). Controls target entities on state changes. Persists `locked_schedule` and `last_on_time`.
 - **nordpool_adapter.py** — Auto-detects HACS (`raw_today` attribute) vs native HA Nord Pool. Normalizes both to `[{start, end, value}]` format.
 - **config_flow.py** — Strategy-aware setup: step 1 (sensor + name + strategy) → step 2 (strategy-specific required settings). Options flow: step 1 (strategy + sensor) → step 2 (strategy settings) → step 3 (advanced: mode, thresholds, exclusion, entities). ConfigEntry VERSION = 3.
 
@@ -65,9 +65,9 @@ custom_components/power_saver/
 ### Data Flow
 
 1. Coordinator fetches prices from Nord Pool (via adapter)
-2. `scheduler.build_schedule()` dispatches to appropriate strategy
-3. `scheduler.find_current_slot()` determines current state
-4. `apply_committed_block_protection()` prevents mid-cycle interruption
+2. On first run, new prices, or schedule expiry: `scheduler.build_schedule()` computes and locks the schedule
+3. On subsequent refreshes: locked schedule is reused without recomputation
+4. `scheduler.find_current_slot()` determines current state from the locked schedule
 5. Coordinator controls target entities (switch/input_boolean/light)
 6. Sensors read from `coordinator.data` (a `PowerSaverData` dataclass)
 
