@@ -407,3 +407,75 @@ class TestShouldRecomputeSchedule:
         mock_coordinator._schedule_has_tomorrow = False
 
         assert mock_coordinator._should_recompute_schedule([], now) is True
+
+
+class TestValidateStoredSchedule:
+    """Tests for _validate_stored_schedule."""
+
+    def test_valid_schedule_passes(self):
+        """A well-formed schedule should not raise."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        schedule = [
+            {"time": "2026-02-06T00:00:00+01:00", "status": "standby", "price": 0.1},
+            {"time": "2026-02-06T00:15:00+01:00", "status": "active", "price": 0.2},
+        ]
+        PowerSaverCoordinator._validate_stored_schedule(schedule)
+
+    def test_empty_list_raises(self):
+        """Empty schedule should raise TypeError."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(TypeError, match="non-empty list"):
+            PowerSaverCoordinator._validate_stored_schedule([])
+
+    def test_not_a_list_raises(self):
+        """Non-list input should raise TypeError."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(TypeError, match="non-empty list"):
+            PowerSaverCoordinator._validate_stored_schedule("not a list")
+
+    def test_slot_not_a_dict_raises(self):
+        """Non-dict slot should raise TypeError."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(TypeError, match="Slot 0 is not a dict"):
+            PowerSaverCoordinator._validate_stored_schedule(["not a dict"])
+
+    def test_missing_time_raises(self):
+        """Slot missing 'time' key should raise KeyError."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(KeyError):
+            PowerSaverCoordinator._validate_stored_schedule(
+                [{"status": "standby", "price": 0.1}]
+            )
+
+    def test_bad_time_format_raises(self):
+        """Slot with unparseable time should raise ValueError."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(ValueError):
+            PowerSaverCoordinator._validate_stored_schedule(
+                [{"time": "not-a-date", "status": "standby"}]
+            )
+
+    def test_missing_status_raises(self):
+        """Slot missing 'status' key should raise KeyError."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(KeyError, match="status"):
+            PowerSaverCoordinator._validate_stored_schedule(
+                [{"time": "2026-02-06T00:00:00+01:00", "price": 0.1}]
+            )
+
+    def test_second_slot_malformed_raises(self):
+        """Validation should catch issues in any slot, not just the first."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        with pytest.raises(KeyError):
+            PowerSaverCoordinator._validate_stored_schedule([
+                {"time": "2026-02-06T00:00:00+01:00", "status": "standby"},
+                {"time": "2026-02-06T00:15:00+01:00"},  # missing status
+            ])

@@ -420,6 +420,22 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         except Exception:
             _LOGGER.exception("Failed to control entities %s", entities)
 
+    @staticmethod
+    def _validate_stored_schedule(schedule: list[dict]) -> None:
+        """Validate that every slot in a stored schedule has required fields.
+
+        Raises KeyError, TypeError, or ValueError if any slot is malformed.
+        """
+        if not isinstance(schedule, list) or not schedule:
+            raise TypeError("Schedule must be a non-empty list")
+        for i, slot in enumerate(schedule):
+            if not isinstance(slot, dict):
+                raise TypeError(f"Slot {i} is not a dict")
+            time_str = slot["time"]  # KeyError if missing
+            datetime.fromisoformat(time_str)  # ValueError if unparseable
+            if "status" not in slot:
+                raise KeyError(f"Slot {i} missing 'status' field")
+
     async def _async_load_state(self) -> None:
         """Load persisted state from storage."""
         try:
