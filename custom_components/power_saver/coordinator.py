@@ -185,7 +185,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         3. All slots in the locked schedule are in the past (day rollover)
         4. User options changed (fingerprint mismatch)
         """
-        if self._locked_schedule is None:
+        if not self._locked_schedule:
             _LOGGER.info("No locked schedule, will compute")
             return True
 
@@ -199,9 +199,16 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             return True
 
         # Check if the schedule has expired (all slots in the past)
-        last_slot_time = datetime.fromisoformat(
-            self._locked_schedule[-1]["time"]
-        ).astimezone(now.tzinfo)
+        try:
+            last_slot_time = datetime.fromisoformat(
+                self._locked_schedule[-1]["time"]
+            ).astimezone(now.tzinfo)
+        except (KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Malformed last slot in locked schedule, recomputing: %s", exc
+            )
+            return True
+
         if now > last_slot_time + timedelta(minutes=15):
             _LOGGER.info("Locked schedule expired (all slots in past), recomputing")
             return True

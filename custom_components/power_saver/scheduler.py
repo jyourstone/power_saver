@@ -794,8 +794,9 @@ def build_minimum_runtime_schedule(
     # regardless of price sorting. Track this so the first window honours it.
     overdue = next_deadline <= now
 
-    # Schedule across the full horizon (locked schedule keeps past slots active)
-    search_from = 0
+    # Start from the current slot — past slots are already expired and must not
+    # consume required_slots quota when the schedule is recomputed mid-day.
+    search_from = current_slot_idx
     windows_filled = 0
 
     while search_from < len(schedule):

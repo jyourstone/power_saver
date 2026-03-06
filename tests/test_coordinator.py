@@ -374,3 +374,36 @@ class TestShouldRecomputeSchedule:
         mock_coordinator.config_entry.options = opts
 
         assert mock_coordinator._should_recompute_schedule([], now) is False
+
+    def test_returns_true_when_locked_schedule_is_empty_list(
+        self, mock_coordinator, now
+    ):
+        """Empty locked schedule should trigger recompute."""
+        mock_coordinator._locked_schedule = []
+        assert mock_coordinator._should_recompute_schedule([], now) is True
+
+    def test_returns_true_when_last_slot_missing_time_key(
+        self, mock_coordinator, now
+    ):
+        """Malformed slot (missing 'time' key) should trigger recompute."""
+        mock_coordinator._locked_schedule = [{"price": 0.10, "status": "standby"}]
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+        mock_coordinator._schedule_has_tomorrow = False
+
+        assert mock_coordinator._should_recompute_schedule([], now) is True
+
+    def test_returns_true_when_last_slot_has_bad_time(
+        self, mock_coordinator, now
+    ):
+        """Malformed slot (bad ISO string) should trigger recompute."""
+        mock_coordinator._locked_schedule = [
+            {"price": 0.10, "status": "standby", "time": "not-a-date"}
+        ]
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+        mock_coordinator._schedule_has_tomorrow = False
+
+        assert mock_coordinator._should_recompute_schedule([], now) is True

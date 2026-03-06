@@ -1755,4 +1755,50 @@ class TestMinimumRuntimeStrategy:
                 f"Block at index {start} has length {length}, expected >= 8 for 2h min_hours_on"
             )
 
+    def test_mid_day_recompute_skips_past_slots(self, now, today_prices):
+        """When schedule is recomputed mid-day, past slots must not be activated.
+
+        Cheapest prices are at 03:00 (0.03) and 04:00 (0.04), both well in the
+        past when now=14:30. The scheduler must only pick future slots.
+        """
+        last_on = now - timedelta(hours=2)
+        schedule = build_minimum_runtime_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours_on=1.0,  # 4 slots needed
+            now=now,
+            max_hours_off=6.0,
+            last_on_time=last_on,
+        )
+
+        for s in schedule:
+            slot_time = datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
+            slot_end = slot_time + timedelta(minutes=15)
+            if slot_end <= now and s["status"] == "active":
+                pytest.fail(
+                    f"Past slot at {s['time']} (price={s['price']}) was activated"
+                )
+
+    def test_mid_day_recompute_activates_enough_future_slots(self, now, today_prices):
+        """Mid-day recompute must still activate the required number of future slots."""
+        last_on = now - timedelta(hours=2)
+        schedule = build_minimum_runtime_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=[],
+            min_hours_on=1.0,  # 4 slots needed
+            now=now,
+            max_hours_off=6.0,
+            last_on_time=last_on,
+        )
+
+        future_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
+            + timedelta(minutes=15) > now
+        ]
+        assert len(future_active) >= 4, (
+            f"Expected at least 4 future active slots, got {len(future_active)}"
+        )
+
 
