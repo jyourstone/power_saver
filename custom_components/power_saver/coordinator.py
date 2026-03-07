@@ -198,6 +198,31 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER.info("Tomorrow prices now available, recomputing schedule")
             return True
 
+        if raw_tomorrow:
+            # Check if raw_tomorrow contains data beyond the schedule's last slot.
+            # This happens after midnight when "tomorrow" (new day+1) prices arrive
+            # but the locked schedule only covers today+yesterday's-tomorrow.
+            try:
+                last_slot_time = datetime.fromisoformat(
+                    self._locked_schedule[-1]["time"]
+                ).astimezone(now.tzinfo)
+                last_tomorrow_time = max(
+                    scheduler._to_datetime(s.get("start")).astimezone(now.tzinfo)
+                    for s in raw_tomorrow
+                )
+                if last_tomorrow_time > last_slot_time:
+                    _LOGGER.info(
+                        "Tomorrow prices extend beyond locked schedule, recomputing"
+                    )
+                    return True
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Failed to check if tomorrow prices extend beyond schedule, "
+                    "recomputing to be safe: %s",
+                    exc,
+                )
+                return True
+
         # Check if the schedule has expired (all slots in the past)
         try:
             last_slot_time = datetime.fromisoformat(
@@ -420,22 +445,6 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         except Exception:
             _LOGGER.exception("Failed to control entities %s", entities)
 
-    @staticmethod
-    def _validate_stored_schedule(schedule: list[dict]) -> None:
-        """Validate that every slot in a stored schedule has required fields.
-
-        Raises KeyError, TypeError, or ValueError if any slot is malformed.
-        """
-        if not isinstance(schedule, list) or not schedule:
-            raise TypeError("Schedule must be a non-empty list")
-        for i, slot in enumerate(schedule):
-            if not isinstance(slot, dict):
-                raise TypeError(f"Slot {i} is not a dict")
-            time_str = slot["time"]  # KeyError if missing
-            datetime.fromisoformat(time_str)  # ValueError if unparseable
-            if "status" not in slot:
-                raise KeyError(f"Slot {i} missing 'status' field")
-
     async def _async_load_state(self) -> None:
         """Load persisted state from storage."""
         try:
@@ -443,37 +452,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             if not data:
                 _LOGGER.debug("No previous state found in storage")
                 return
-            # Restore locked schedule
-            stored_schedule = data.get("locked_schedule")
-            if stored_schedule:
-                try:
-                    self._validate_stored_schedule(stored_schedule)
-                    now = dt_util.now()
-                    last_slot_time = datetime.fromisoformat(
-                        stored_schedule[-1]["time"]
-                    ).astimezone(now.tzinfo)
-                    if now <= last_slot_time + timedelta(minutes=15):
-                        self._locked_schedule = stored_schedule
-                        self._schedule_has_tomorrow = data.get(
-                            "schedule_has_tomorrow", False
-                        )
-                        self._options_fingerprint = data.get(
-                            "options_fingerprint"
-                        )
-                        _LOGGER.info(
-                            "Restored locked schedule (%d slots, has_tomorrow=%s)",
-                            len(stored_schedule),
-                            self._schedule_has_tomorrow,
-                        )
-                    else:
-                        _LOGGER.info(
-                            "Persisted schedule expired, will recompute"
-                        )
-                except (KeyError, TypeError, ValueError) as err:
-                    _LOGGER.warning(
-                        "Discarding malformed stored schedule: %s", err,
-                    )
-            # Restore last_on_time for Minimum Runtime strategy
+            # The schedule is always recomputed on startup using current prices.
+            # Only last_on_time is restored (needed by Minimum Runtime).
             last_on_iso = data.get("last_on_time")
             if last_on_iso:
                 try:
@@ -491,9 +471,6 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         try:
             await self._store.async_save(
                 {
-                    "locked_schedule": self._locked_schedule,
-                    "schedule_has_tomorrow": self._schedule_has_tomorrow,
-                    "options_fingerprint": self._options_fingerprint,
                     "last_on_time": (
                         self._last_on_time.isoformat()
                         if self._last_on_time

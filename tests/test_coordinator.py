@@ -345,10 +345,17 @@ class TestShouldRecomputeSchedule:
         assert mock_coordinator._should_recompute_schedule([], now) is False
 
     def test_returns_false_when_tomorrow_already_included(
-        self, mock_coordinator, now, sample_schedule, tomorrow_prices
+        self, mock_coordinator, now, today_prices, tomorrow_prices
     ):
-        """Tomorrow prices present but already incorporated → no recompute."""
-        mock_coordinator._locked_schedule = sample_schedule
+        """Tomorrow prices present and already incorporated → no recompute."""
+        # Build schedule that actually includes tomorrow's data
+        schedule_with_tomorrow = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+        )
+        mock_coordinator._locked_schedule = schedule_with_tomorrow
         mock_coordinator._schedule_has_tomorrow = True
         mock_coordinator._options_fingerprint = (
             mock_coordinator._compute_options_fingerprint()
@@ -394,6 +401,39 @@ class TestShouldRecomputeSchedule:
 
         assert mock_coordinator._should_recompute_schedule([], now) is True
 
+    def test_returns_true_when_tomorrow_extends_beyond_schedule(
+        self, mock_coordinator, now, today_prices, tomorrow_prices
+    ):
+        """After midnight, new tomorrow (day+2) prices should trigger recompute.
+
+        Scenario: schedule was computed yesterday with today+tomorrow data.
+        Now it's the next day and raw_tomorrow contains the day after tomorrow.
+        The schedule's last slot is older than the newest tomorrow slot.
+        """
+        # Build schedule covering Feb 6 + Feb 7 (day_offset=0 and 1)
+        schedule_with_tomorrow = build_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+        )
+        mock_coordinator._locked_schedule = schedule_with_tomorrow
+        mock_coordinator._schedule_has_tomorrow = True
+        mock_coordinator._options_fingerprint = (
+            mock_coordinator._compute_options_fingerprint()
+        )
+
+        # Simulate being on Feb 7 with raw_tomorrow = Feb 8 (day_offset=2)
+        day_after_tomorrow = [
+            slot for h, p in enumerate([0.05] * 24)
+            for slot in make_nordpool_hour(h, p, day_offset=2)
+        ]
+        now_next_day = now + timedelta(days=1)
+
+        assert mock_coordinator._should_recompute_schedule(
+            day_after_tomorrow, now_next_day
+        ) is True
+
     def test_returns_true_when_last_slot_has_bad_time(
         self, mock_coordinator, now
     ):
@@ -409,73 +449,3 @@ class TestShouldRecomputeSchedule:
         assert mock_coordinator._should_recompute_schedule([], now) is True
 
 
-class TestValidateStoredSchedule:
-    """Tests for _validate_stored_schedule."""
-
-    def test_valid_schedule_passes(self):
-        """A well-formed schedule should not raise."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        schedule = [
-            {"time": "2026-02-06T00:00:00+01:00", "status": "standby", "price": 0.1},
-            {"time": "2026-02-06T00:15:00+01:00", "status": "active", "price": 0.2},
-        ]
-        PowerSaverCoordinator._validate_stored_schedule(schedule)
-
-    def test_empty_list_raises(self):
-        """Empty schedule should raise TypeError."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(TypeError, match="non-empty list"):
-            PowerSaverCoordinator._validate_stored_schedule([])
-
-    def test_not_a_list_raises(self):
-        """Non-list input should raise TypeError."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(TypeError, match="non-empty list"):
-            PowerSaverCoordinator._validate_stored_schedule("not a list")
-
-    def test_slot_not_a_dict_raises(self):
-        """Non-dict slot should raise TypeError."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(TypeError, match="Slot 0 is not a dict"):
-            PowerSaverCoordinator._validate_stored_schedule(["not a dict"])
-
-    def test_missing_time_raises(self):
-        """Slot missing 'time' key should raise KeyError."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(KeyError):
-            PowerSaverCoordinator._validate_stored_schedule(
-                [{"status": "standby", "price": 0.1}]
-            )
-
-    def test_bad_time_format_raises(self):
-        """Slot with unparseable time should raise ValueError."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(ValueError):
-            PowerSaverCoordinator._validate_stored_schedule(
-                [{"time": "not-a-date", "status": "standby"}]
-            )
-
-    def test_missing_status_raises(self):
-        """Slot missing 'status' key should raise KeyError."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(KeyError, match="status"):
-            PowerSaverCoordinator._validate_stored_schedule(
-                [{"time": "2026-02-06T00:00:00+01:00", "price": 0.1}]
-            )
-
-    def test_second_slot_malformed_raises(self):
-        """Validation should catch issues in any slot, not just the first."""
-        from custom_components.power_saver.coordinator import PowerSaverCoordinator
-
-        with pytest.raises(KeyError):
-            PowerSaverCoordinator._validate_stored_schedule([
-                {"time": "2026-02-06T00:00:00+01:00", "status": "standby"},
-                {"time": "2026-02-06T00:15:00+01:00"},  # missing status
-            ])
