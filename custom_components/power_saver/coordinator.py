@@ -215,8 +215,13 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                         "Tomorrow prices extend beyond locked schedule, recomputing"
                     )
                     return True
-            except Exception:
-                pass
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Failed to check if tomorrow prices extend beyond schedule, "
+                    "recomputing to be safe: %s",
+                    exc,
+                )
+                return True
 
         # Check if the schedule has expired (all slots in the past)
         try:

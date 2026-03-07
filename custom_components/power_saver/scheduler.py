@@ -9,7 +9,7 @@ It provides two scheduling strategies:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -689,16 +689,23 @@ def build_lowest_price_schedule(
     # Apply minimum consecutive hours constraint if enabled
     if min_consecutive_hours is not None and min_consecutive_hours > 0:
         if full_day:
-            # For full-day mode, enforce per calendar day so each day's quota
-            # is respected independently (avoids cross-day slot migration).
-            periods = _partition_into_periods(schedule, period_from, period_to, now)
-            for period_indices in periods:
-                sub = [schedule[i] for i in period_indices]
+            # For full-day mode, enforce per calendar day (midnight-to-midnight)
+            # so each day's quota is respected independently. We do NOT use
+            # _partition_into_periods here because when period_from == period_to
+            # at a non-midnight time (e.g. 06:00→06:00) it creates 24-hour
+            # windows anchored at period_from, which can span two calendar days
+            # and allow cross-day slot migration.
+            days: dict[date, list[int]] = {}
+            for i, slot in enumerate(schedule):
+                slot_date = datetime.fromisoformat(slot["time"]).date()
+                days.setdefault(slot_date, []).append(i)
+            for day_indices in days.values():
+                sub = [schedule[i] for i in day_indices]
                 sub = _enforce_min_consecutive(
                     sub, min_consecutive_hours, min_hours, always_expensive,
                     now=now, inverted=inverted, always_cheap=always_cheap,
                 )
-                for local_i, global_i in enumerate(period_indices):
+                for local_i, global_i in enumerate(day_indices):
                     schedule[global_i] = sub[local_i]
         else:
             schedule = _enforce_min_consecutive(
