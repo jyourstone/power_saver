@@ -1267,6 +1267,31 @@ class TestLowestPriceStrategy:
 
         assert len(schedule) == 192  # 96 + 96
 
+    def test_consecutive_does_not_migrate_slots_across_days(
+        self, now, today_prices, tomorrow_prices
+    ):
+        """Each day keeps its own active slots after consecutive enforcement.
+
+        Regression test: _enforce_min_consecutive was applied globally across
+        today+tomorrow, causing all active slots to land on the cheaper day.
+        """
+        schedule = build_lowest_price_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+            min_consecutive_hours=1.0,
+        )
+
+        today_slots = [s for s in schedule if datetime.fromisoformat(s["time"]).astimezone(TZ).date() == now.date()]
+        tomorrow_slots = [s for s in schedule if datetime.fromisoformat(s["time"]).astimezone(TZ).date() != now.date()]
+
+        today_active = sum(1 for s in today_slots if s["status"] == "active")
+        tomorrow_active = sum(1 for s in tomorrow_slots if s["status"] == "active")
+
+        assert today_active >= 4, f"Today should have at least 1 active hour, got {today_active} slots"
+        assert tomorrow_active >= 4, f"Tomorrow should have at least 1 active hour, got {tomorrow_active} slots"
+
     def test_exclusion_interaction(self, now, today_prices):
         """Excluded slots in custom periods stay excluded."""
         schedule = build_lowest_price_schedule(

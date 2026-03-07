@@ -688,10 +688,23 @@ def build_lowest_price_schedule(
 
     # Apply minimum consecutive hours constraint if enabled
     if min_consecutive_hours is not None and min_consecutive_hours > 0:
-        schedule = _enforce_min_consecutive(
-            schedule, min_consecutive_hours, min_hours, always_expensive,
-            now=now, inverted=inverted, always_cheap=always_cheap,
-        )
+        if full_day:
+            # For full-day mode, enforce per calendar day so each day's quota
+            # is respected independently (avoids cross-day slot migration).
+            periods = _partition_into_periods(schedule, period_from, period_to, now)
+            for period_indices in periods:
+                sub = [schedule[i] for i in period_indices]
+                sub = _enforce_min_consecutive(
+                    sub, min_consecutive_hours, min_hours, always_expensive,
+                    now=now, inverted=inverted, always_cheap=always_cheap,
+                )
+                for local_i, global_i in enumerate(period_indices):
+                    schedule[global_i] = sub[local_i]
+        else:
+            schedule = _enforce_min_consecutive(
+                schedule, min_consecutive_hours, min_hours, always_expensive,
+                now=now, inverted=inverted, always_cheap=always_cheap,
+            )
 
     # Log statistics
     active_count = sum(1 for s in schedule if s.get("status") == "active")
