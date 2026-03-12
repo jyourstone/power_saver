@@ -258,8 +258,9 @@ def _get_native_coordinator_prices(
                     "value": float(price_mwh) / 1000.0,
                 })
     except (AttributeError, TypeError, KeyError, ValueError) as exc:
-        _LOGGER.debug(
-            "Failed to read from native Nord Pool coordinator data: %s", exc
+        _LOGGER.warning(
+            "Malformed cached Nord Pool data: %s", exc,
+            exc_info=True,
         )
         return None
 

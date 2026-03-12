@@ -163,7 +163,13 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self.hass.async_create_task(self.async_request_refresh())
 
     def _subscribe_native_coordinator(self) -> None:
-        """Subscribe to native Nord Pool coordinator updates."""
+        """Subscribe to native Nord Pool coordinator updates.
+
+        Called at setup and retried on each refresh until successful.
+        """
+        if self._unsub_native_coordinator is not None:
+            return
+
         try:
             registry = er.async_get(self.hass)
             entity_entry = registry.async_get(self._nordpool_entity)
@@ -185,7 +191,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             )
             _LOGGER.debug("Subscribed to native Nord Pool coordinator updates")
         except Exception:
-            _LOGGER.debug(
+            _LOGGER.warning(
                 "Could not subscribe to native Nord Pool coordinator",
                 exc_info=True,
             )
@@ -288,6 +294,10 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def _async_update_data(self) -> PowerSaverData:
         """Fetch data from Nord Pool sensor and compute schedule."""
+        # Retry native coordinator subscription if not yet established
+        if self._nordpool_type == NORDPOOL_TYPE_NATIVE:
+            self._subscribe_native_coordinator()
+
         now = dt_util.now()
 
         # Read Nord Pool state
