@@ -10,6 +10,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -43,6 +44,7 @@ from .const import (
     DEFAULT_STRATEGY,
     DOMAIN,
     NORDPOOL_TYPE_HACS,
+    NORDPOOL_TYPE_NATIVE,
     STATE_ACTIVE,
     STATE_FORCED_OFF,
     STATE_FORCED_ON,
@@ -95,6 +97,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._last_on_time: datetime | None = None
         self._state_loaded = False
         self._unsub_nordpool: callback | None = None
+        self._unsub_native_coordinator: callback | None = None
         self._previous_state: str | None = None
         self._force_on: bool = False
         self._force_off: bool = False
@@ -144,10 +147,59 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             self.hass, [self._nordpool_entity], self._on_nordpool_update
         )
 
+        # For native Nord Pool, also subscribe to the native coordinator's
+        # data updates. The native coordinator fetches prices hourly (including
+        # tomorrow's) but the current_price sensor state only changes when
+        # the price itself changes — it does NOT fire a state change when
+        # tomorrow's data becomes available. Subscribing directly ensures
+        # we refresh promptly when new price data is fetched.
+        if self._nordpool_type == NORDPOOL_TYPE_NATIVE:
+            self._subscribe_native_coordinator()
+
     @callback
     def _on_nordpool_update(self, event: Event) -> None:
         """Handle Nord Pool sensor state change."""
         _LOGGER.debug("Nord Pool sensor updated, requesting refresh")
+        self.hass.async_create_task(self.async_request_refresh())
+
+    def _subscribe_native_coordinator(self) -> None:
+        """Subscribe to native Nord Pool coordinator updates.
+
+        Called at setup and retried on each refresh until successful.
+        """
+        if self._unsub_native_coordinator is not None:
+            return
+
+        try:
+            registry = er.async_get(self.hass)
+            entity_entry = registry.async_get(self._nordpool_entity)
+            if entity_entry is None or entity_entry.config_entry_id is None:
+                return
+
+            config_entry = self.hass.config_entries.async_get_entry(
+                entity_entry.config_entry_id
+            )
+            if config_entry is None:
+                return
+
+            coordinator = getattr(config_entry, "runtime_data", None)
+            if coordinator is None or not hasattr(coordinator, "async_add_listener"):
+                return
+
+            self._unsub_native_coordinator = coordinator.async_add_listener(
+                self._on_native_coordinator_update
+            )
+            _LOGGER.debug("Subscribed to native Nord Pool coordinator updates")
+        except Exception:
+            _LOGGER.warning(
+                "Could not subscribe to native Nord Pool coordinator",
+                exc_info=True,
+            )
+
+    @callback
+    def _on_native_coordinator_update(self) -> None:
+        """Handle native Nord Pool coordinator data update."""
+        _LOGGER.debug("Native Nord Pool coordinator updated, requesting refresh")
         self.hass.async_create_task(self.async_request_refresh())
 
     # Options that affect schedule computation (excludes CONF_CONTROLLED_ENTITIES)
@@ -242,6 +294,10 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def _async_update_data(self) -> PowerSaverData:
         """Fetch data from Nord Pool sensor and compute schedule."""
+        # Retry native coordinator subscription if not yet established
+        if self._nordpool_type == NORDPOOL_TYPE_NATIVE:
+            self._subscribe_native_coordinator()
+
         now = dt_util.now()
 
         # Read Nord Pool state
@@ -487,4 +543,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         if self._unsub_nordpool:
             self._unsub_nordpool()
             self._unsub_nordpool = None
+        if self._unsub_native_coordinator:
+            self._unsub_native_coordinator()
+            self._unsub_native_coordinator = None
         await super().async_shutdown()

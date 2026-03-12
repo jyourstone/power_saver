@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,8 +15,34 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.power_saver.const import NORDPOOL_TYPE_HACS, NORDPOOL_TYPE_NATIVE
 from custom_components.power_saver.nordpool_adapter import (
     _convert_native_response,
+    _get_native_coordinator_prices,
     find_all_nordpool_sensors,
 )
+
+
+# Mock types that mirror pynordpool's DeliveryPeriodEntry / DeliveryPeriodData
+@dataclass
+class MockDeliveryPeriodEntry:
+    """Mock for pynordpool DeliveryPeriodEntry."""
+
+    start: datetime
+    end: datetime
+    entry: dict[str, float]  # area -> price in MWh
+
+
+@dataclass
+class MockDeliveryPeriodData:
+    """Mock for pynordpool DeliveryPeriodData."""
+
+    requested_date: str
+    entries: list[MockDeliveryPeriodEntry] = field(default_factory=list)
+
+
+@dataclass
+class MockDeliveryPeriodsData:
+    """Mock for pynordpool DeliveryPeriodsData."""
+
+    entries: list[MockDeliveryPeriodData] = field(default_factory=list)
 
 
 class TestConvertNativeResponse:
@@ -371,3 +399,275 @@ class TestFindAllNordpoolSensors:
 
         assert len(result) == 1
         assert result[0][1] == NORDPOOL_TYPE_HACS
+
+
+CET = timezone(timedelta(hours=1))
+
+
+def _make_mock_config_entry(
+    areas: list[str],
+    today_str: str,
+    today_entries: list[MockDeliveryPeriodEntry],
+    tomorrow_str: str | None = None,
+    tomorrow_entries: list[MockDeliveryPeriodEntry] | None = None,
+):
+    """Create a mock config entry with native coordinator data."""
+    periods = [MockDeliveryPeriodData(requested_date=today_str, entries=today_entries)]
+    if tomorrow_str is not None:
+        periods.append(
+            MockDeliveryPeriodData(
+                requested_date=tomorrow_str,
+                entries=tomorrow_entries or [],
+            )
+        )
+
+    coordinator = MagicMock()
+    coordinator.data = MockDeliveryPeriodsData(entries=periods)
+
+    entry = MagicMock()
+    entry.data = {"areas": areas}
+    entry.runtime_data = coordinator
+    return entry
+
+
+MOCK_NOW = datetime(2026, 3, 12, 14, 0, 0, tzinfo=CET)
+
+
+@patch(
+    "custom_components.power_saver.nordpool_adapter.dt_util.now",
+    return_value=MOCK_NOW,
+)
+class TestGetNativeCoordinatorPrices:
+    """Tests for reading prices directly from native Nord Pool coordinator."""
+
+    def test_reads_today_and_tomorrow(self, _mock_now):
+        """Should extract today and tomorrow prices from coordinator data."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE4": 500.0},
+            ),
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 2, 0, tzinfo=CET),
+                entry={"SE4": 300.0},
+            ),
+        ]
+        tomorrow_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 13, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 13, 1, 0, tzinfo=CET),
+                entry={"SE4": 200.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+            tomorrow_str="2026-03-13",
+            tomorrow_entries=tomorrow_entries,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, tomorrow_prices = result
+        assert len(today_prices) == 2
+        assert today_prices[0]["value"] == pytest.approx(0.5)
+        assert today_prices[1]["value"] == pytest.approx(0.3)
+        assert len(tomorrow_prices) == 1
+        assert tomorrow_prices[0]["value"] == pytest.approx(0.2)
+
+    def test_today_only_no_tomorrow(self, _mock_now):
+        """Should return empty tomorrow list when no tomorrow data exists."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE4": 400.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, tomorrow_prices = result
+        assert len(today_prices) == 1
+        assert tomorrow_prices == []
+
+    def test_mwh_to_kwh_conversion(self, _mock_now):
+        """Prices should be converted from MWh to kWh."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 10, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 11, 0, tzinfo=CET),
+                entry={"SE3": 1234.56},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE3"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        assert result[0][0]["value"] == pytest.approx(1.23456)
+
+    def test_uses_first_configured_area(self, _mock_now):
+        """Should use the first area from config entry data."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE3": 100.0, "SE4": 200.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4", "SE3"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        # Should use SE4 (first in areas list) -> 200 MWh -> 0.2 kWh
+        assert result[0][0]["value"] == pytest.approx(0.2)
+
+    def test_returns_none_when_no_runtime_data(self, _mock_now):
+        """Should return None when config entry has no runtime_data."""
+        entry = MagicMock(spec=[])  # No attributes at all
+        assert _get_native_coordinator_prices(entry) is None
+
+    def test_returns_none_when_no_coordinator_data(self, _mock_now):
+        """Should return None when coordinator has no data."""
+        entry = MagicMock()
+        entry.runtime_data = MagicMock()
+        entry.runtime_data.data = None
+        assert _get_native_coordinator_prices(entry) is None
+
+    def test_returns_none_when_no_areas(self, _mock_now):
+        """Should return None when config entry has no areas configured."""
+        entry = MagicMock()
+        entry.data = {"areas": []}
+        entry.runtime_data = MagicMock()
+        entry.runtime_data.data = MockDeliveryPeriodsData(entries=[])
+        assert _get_native_coordinator_prices(entry) is None
+
+    def test_returns_none_when_no_today_data(self, _mock_now):
+        """Should return None when today's data is not found."""
+        # Only has data for a different date
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-01-01",
+            today_entries=[
+                MockDeliveryPeriodEntry(
+                    start=datetime(2026, 1, 1, 0, 0, tzinfo=CET),
+                    end=datetime(2026, 1, 1, 1, 0, tzinfo=CET),
+                    entry={"SE4": 100.0},
+                ),
+            ],
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is None
+
+    def test_skips_entries_missing_area(self, _mock_now):
+        """Should skip entries that don't have the configured area."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE3": 100.0},  # No SE4
+            ),
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 2, 0, tzinfo=CET),
+                entry={"SE4": 200.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, _ = result
+        assert len(today_prices) == 1
+        assert today_prices[0]["value"] == pytest.approx(0.2)
+
+    def test_start_and_end_are_isoformat_strings(self, _mock_now):
+        """Output start/end should be ISO format strings."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE4": 100.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        assert result[0][0]["start"] == "2026-03-12T00:00:00+01:00"
+        assert result[0][0]["end"] == "2026-03-12T01:00:00+01:00"
+
+    def test_handles_corrupt_coordinator_data_gracefully(self, _mock_now):
+        """Should return None on unexpected data structures."""
+        entry = MagicMock()
+        entry.data = {"areas": ["SE4"]}
+        coordinator = MagicMock()
+        # data.entries is not iterable
+        coordinator.data = MagicMock()
+        coordinator.data.entries = 42
+        entry.runtime_data = coordinator
+
+        assert _get_native_coordinator_prices(entry) is None
+
+    def test_tomorrow_empty_when_no_entries(self, _mock_now):
+        """Tomorrow should be empty when delivery period exists but has no entries."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE4": 100.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+            tomorrow_str="2026-03-13",
+            tomorrow_entries=[],
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, tomorrow_prices = result
+        assert len(today_prices) == 1
+        assert tomorrow_prices == []
