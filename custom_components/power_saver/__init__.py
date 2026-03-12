@@ -6,6 +6,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
+try:
+    from homeassistant.config_entries import OptionsFlowWithReload  # noqa: F401
+    _OPTIONS_FLOW_RELOADS = True
+except ImportError:
+    _OPTIONS_FLOW_RELOADS = False
+
 from .const import DOMAIN
 from .coordinator import PowerSaverCoordinator
 
@@ -21,8 +27,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Refresh schedule when user changes options
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    # Refresh schedule when user changes options.
+    # OptionsFlowWithReload (HA 2025.x+) auto-reloads the entry, so a manual
+    # update listener must only be registered on older HA versions.
+    if not _OPTIONS_FLOW_RELOADS:
+        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
