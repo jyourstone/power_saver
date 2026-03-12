@@ -149,7 +149,12 @@ def _get_hacs_prices(
 async def _async_get_native_prices(
     hass: HomeAssistant, entity_id: str
 ) -> tuple[list[dict], list[dict]]:
-    """Fetch prices from native HA Nord Pool via service call."""
+    """Fetch prices from native HA Nord Pool.
+
+    Tries to read directly from the native coordinator's cached data first
+    (which already contains tomorrow's prices from the batch API call).
+    Falls back to individual service calls if direct read is unavailable.
+    """
     registry = er.async_get(hass)
     entity_entry = registry.async_get(entity_id)
     if entity_entry is None or entity_entry.config_entry_id is None:
@@ -159,6 +164,27 @@ async def _async_get_native_prices(
         return [], []
 
     config_entry_id = entity_entry.config_entry_id
+
+    # Primary: read directly from native coordinator's cached data.
+    # The native coordinator fetches yesterday+today+tomorrow in a single
+    # batch API call (async_get_delivery_periods). Reading from its cache
+    # is more reliable than the service call which uses a different API
+    # method (async_get_delivery_period, singular) that may not return
+    # future dates reliably.
+    config_entry = hass.config_entries.async_get_entry(config_entry_id)
+    if config_entry is not None:
+        result = _get_native_coordinator_prices(config_entry)
+        if result is not None:
+            raw_today, raw_tomorrow = result
+            _LOGGER.debug(
+                "Read prices from native coordinator cache: today=%d, tomorrow=%d",
+                len(raw_today),
+                len(raw_tomorrow),
+            )
+            return raw_today, raw_tomorrow
+
+    # Fallback: individual service calls
+    _LOGGER.debug("Falling back to service calls for native Nord Pool prices")
     today = dt_util.now().date()
     tomorrow = today + timedelta(days=1)
 
@@ -166,6 +192,81 @@ async def _async_get_native_prices(
     raw_tomorrow = await _async_fetch_native_date(hass, config_entry_id, tomorrow)
 
     return raw_today, raw_tomorrow
+
+
+def _get_native_coordinator_prices(
+    config_entry,
+) -> tuple[list[dict], list[dict]] | None:
+    """Read prices directly from the native Nord Pool coordinator's cached data.
+
+    The native coordinator stores DeliveryPeriodsData with entries for
+    yesterday, today, and tomorrow. Each entry has a requested_date (str)
+    and entries (list of DeliveryPeriodEntry with start, end, entry attrs).
+
+    Returns (today_prices, tomorrow_prices) or None if unable to read.
+    """
+    coordinator = getattr(config_entry, "runtime_data", None)
+    if coordinator is None:
+        return None
+
+    data = getattr(coordinator, "data", None)
+    if data is None:
+        return None
+
+    entries = getattr(data, "entries", None)
+    if not entries:
+        return None
+
+    # Get area(s) from the native config entry's data
+    areas = config_entry.data.get("areas", [])
+    if not areas:
+        _LOGGER.debug("No areas configured in native Nord Pool config entry")
+        return None
+    area = areas[0]
+
+    now = dt_util.now()
+    today_str = now.strftime("%Y-%m-%d")
+    tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    today_prices: list[dict] = []
+    tomorrow_prices: list[dict] = []
+
+    try:
+        for delivery_period in entries:
+            requested_date = getattr(delivery_period, "requested_date", None)
+            period_entries = getattr(delivery_period, "entries", [])
+
+            if requested_date == today_str:
+                target = today_prices
+            elif requested_date == tomorrow_str:
+                target = tomorrow_prices
+            else:
+                continue
+
+            for entry in period_entries:
+                start = entry.start
+                end = entry.end
+                price_mwh = entry.entry.get(area)
+                if price_mwh is None:
+                    continue
+
+                target.append({
+                    "start": (
+                        start if isinstance(start, str) else start.isoformat()
+                    ),
+                    "end": end if isinstance(end, str) else end.isoformat(),
+                    "value": float(price_mwh) / 1000.0,
+                })
+    except (AttributeError, TypeError, KeyError, ValueError) as exc:
+        _LOGGER.debug(
+            "Failed to read from native Nord Pool coordinator data: %s", exc
+        )
+        return None
+
+    if not today_prices:
+        return None
+
+    return today_prices, tomorrow_prices
 
 
 async def _async_fetch_native_date(
