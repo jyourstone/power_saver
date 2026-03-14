@@ -38,7 +38,7 @@ jobs:
           zip -r ../../power_saver.zip .
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.5.0
         with:
           generate_release_notes: true
           prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
