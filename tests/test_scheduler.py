@@ -2032,8 +2032,13 @@ class TestMinimumRuntimeRollingWindowCoverage:
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
         base_tomorrow = datetime(2026, 3, 18, tzinfo=TZ)
 
+        # Mix cheap (1.0) and expensive (5.0) prices.  Enough cheap slots
+        # across both scheduling windows so emergency activation never fires.
         today_hourly = [5.0] * 24
-        tomorrow_hourly = [5.0] * 24
+        # 10:00-14:00 cheap (window 1), 17:00-21:00 cheap (window 2)
+        tomorrow_hourly = (
+            [5.0] * 10 + [1.0] * 4 + [5.0] * 3 + [1.0] * 4 + [5.0] * 3
+        )
 
         prices_today = self._make_prices(base_today, today_hourly)
         prices_tomorrow = self._make_prices(base_tomorrow, tomorrow_hourly)
@@ -2049,14 +2054,18 @@ class TestMinimumRuntimeRollingWindowCoverage:
             always_expensive=4.0,
         )
 
-        # With always_expensive=4.0 and all prices=5.0, coverage enforcement
-        # should NOT activate any slots (they're all above the threshold).
-        # Only emergency activations from the main loop would be present.
+        # With enough cheap slots and always_expensive=4.0, no slot with
+        # price >= 4.0 should be active — neither from the main loop nor
+        # from coverage enforcement.
         for s in schedule:
+            t = datetime.fromisoformat(s["time"]).astimezone(TZ)
+            if t < now:
+                continue
             if s["status"] == "active":
-                # Only emergency slots (from main loop) should exist;
-                # coverage must not have activated expensive slots.
-                pass  # Emergency activation is acceptable
+                assert s["price"] < 4.0, (
+                    f"Slot at {s['time']} (price={s['price']}) is above "
+                    "always_expensive and should not have been activated"
+                )
 
     def test_first_run_no_last_on_time(self):
         """On first run (no last_on_time), rolling window is covered after warmup."""
