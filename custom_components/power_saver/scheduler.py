@@ -917,14 +917,15 @@ def build_minimum_runtime_schedule(
         # If the next deadline is beyond the schedule data, stop.
         # That window will be handled when the schedule is recomputed
         # with new price data.
-        last_slot_time = datetime.fromisoformat(
-            schedule[-1]["time"]
-        ).astimezone(now.tzinfo)
-        if next_deadline > last_slot_time:
+        last_slot_end = (
+            datetime.fromisoformat(schedule[-1]["time"]).astimezone(now.tzinfo)
+            + timedelta(minutes=15)
+        )
+        if next_deadline > last_slot_end:
             _LOGGER.debug(
                 "Next deadline %s is beyond schedule horizon %s — "
                 "deferring to next recomputation",
-                next_deadline.isoformat(), last_slot_time.isoformat(),
+                next_deadline.isoformat(), last_slot_end.isoformat(),
             )
             break
 

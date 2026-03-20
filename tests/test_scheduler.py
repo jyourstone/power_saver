@@ -1898,7 +1898,7 @@ class TestMinimumRuntimeDeadlineWindowing:
         prices_today = self._make_prices(base_today, today_hourly)
         prices_tomorrow = self._make_prices(base_tomorrow, tomorrow_hourly)
 
-        # Deadline is now + 4h = 18:30, window ends at 18:30 + 1h = 19:30
+        # last_on = 12:30, deadline = 12:30 + 6h = 18:30, window ends at 18:30 + 1h = 19:30
         last_on = now - timedelta(hours=2)
         schedule = build_minimum_runtime_schedule(
             raw_today=prices_today,
@@ -1909,15 +1909,15 @@ class TestMinimumRuntimeDeadlineWindowing:
             last_on_time=last_on,
         )
 
-        # Must have slots activated before the deadline window ends
-        deadline_window_end = now + timedelta(hours=7)  # 6h off + 1h on
+        # Must have slots activated before the first deadline window ends
+        first_window_end = last_on + timedelta(hours=6.0 + 1.0)  # deadline + min_hours_on
         active_before = [
             s for s in schedule
             if s["status"] == "active"
-            and datetime.fromisoformat(s["time"]).astimezone(TZ) < deadline_window_end
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) < first_window_end
         ]
         assert len(active_before) >= 4, (
-            f"Expected at least 4 active slots before deadline window, "
+            f"Expected at least 4 active slots before first deadline window, "
             f"got {len(active_before)}"
         )
 
