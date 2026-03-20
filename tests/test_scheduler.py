@@ -1827,12 +1827,12 @@ class TestMinimumRuntimeStrategy:
         )
 
 
-class TestMinimumRuntimeRollingWindowCoverage:
-    """Tests for rolling window coverage enforcement in Minimum Runtime strategy.
+class TestMinimumRuntimeDeadlineWindowing:
+    """Tests for the deadline-based windowing in Minimum Runtime strategy.
 
-    The main selection loop picks cheapest slots per deadline window, but price
-    clustering can violate the rolling window constraint.  These tests verify
-    the post-processing pass fills the gaps.
+    The main loop partitions the schedule horizon into sequential windows
+    anchored by deadlines (last_on + max_hours_off) and picks the cheapest
+    slots in each window.  These tests verify correctness of this approach.
     """
 
     def _make_prices(self, base_date, hourly_prices):
@@ -1849,27 +1849,9 @@ class TestMinimumRuntimeRollingWindowCoverage:
                 })
         return slots
 
-    def _count_active_in_window(
-        self, schedule, window_start, window_end, tz, last_on_time=None,
-    ):
-        """Count active slots in [window_start, window_end]."""
-        count = 0
-        if last_on_time and window_start <= last_on_time <= window_end:
-            count += 1
-        for s in schedule:
-            t = datetime.fromisoformat(s["time"]).astimezone(tz)
-            if window_start <= t <= window_end and s["status"] == "active":
-                count += 1
-        return count
-
-    def test_price_clustering_fills_gap_immediately(self):
-        """When cheap prices cluster far from now, coverage activates slots early.
-
-        Reproduces the user-reported issue: last_on ~8h ago, cheapest prices
-        cluster 13+ hours from now, rolling_window=28h, min_hours_on=4h.
-        Without coverage enforcement, ALL active slots would be 10:00-14:00
-        tomorrow.  With it, the scheduler should start activating immediately
-        so the rolling window fills up as time passes.
+    def test_cheap_prices_far_away_selected(self):
+        """When cheap prices are far from now but within the deadline window,
+        the main loop selects them instead of expensive near-term slots.
         """
         now = datetime(2026, 3, 17, 21, 5, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
@@ -1892,87 +1874,55 @@ class TestMinimumRuntimeRollingWindowCoverage:
             last_on_time=last_on,
         )
 
-        # The key assertion: there MUST be active slots between now and
-        # midnight, not only at 10:00+ tomorrow.
-        tonight_active = [
+        # The cheap slots tomorrow (0.05) should be selected
+        cheap_active = [
             s for s in schedule
-            if s["status"] == "active"
-            and now <= datetime.fromisoformat(s["time"]).astimezone(TZ)
-            < base_tomorrow
+            if s["status"] == "active" and s["price"] == 0.05
         ]
-        assert len(tonight_active) > 0, (
-            "Coverage enforcement should activate slots tonight to fill the "
-            "rolling window, not wait until cheap hours tomorrow"
+        assert len(cheap_active) == 16, (
+            f"Expected 16 cheap (0.05) active slots, got {len(cheap_active)}"
         )
 
-        # The device should start running from the current slot onward
-        future_active = sorted(
-            [
-                s for s in schedule
-                if s["status"] == "active"
-                and datetime.fromisoformat(s["time"]).astimezone(TZ) >= now
-            ],
-            key=lambda s: s["time"],
-        )
-        first_active_time = datetime.fromisoformat(
-            future_active[0]["time"]
-        ).astimezone(TZ)
-        gap_hours = (first_active_time - last_on).total_seconds() / 3600
-        # First activation should be within a few hours of now, not 13+ hours
-        assert gap_hours < 10, (
-            f"First activation gap from last_on is {gap_hours:.1f}h; "
-            "should be much shorter with coverage enforcement"
-        )
-
-    def test_rolling_window_satisfied_once_enough_future_slots(self):
-        """Rolling window constraint is met for slots far enough in the future.
-
-        Near `now` the constraint may be violated because past history can't
-        be changed.  But once enough future time has passed (min_hours_on),
-        the constraint should hold.
+    def test_deadline_forces_activation_before_cheap_period(self):
+        """When the deadline is before the cheap period, slots before
+        the deadline are selected even if more expensive.
         """
-        now = datetime(2026, 3, 17, 21, 0, 0, tzinfo=TZ)
+        now = datetime(2026, 3, 17, 14, 30, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
         base_tomorrow = datetime(2026, 3, 18, tzinfo=TZ)
 
-        today_hourly = [0.50] * 14 + [0.80] * 10
-        tomorrow_hourly = [0.60] * 10 + [0.05] * 4 + [0.60] * 10
+        # Moderate today, very cheap tomorrow evening (far beyond deadline)
+        today_hourly = [0.50] * 24
+        tomorrow_hourly = [0.50] * 20 + [0.01] * 4
 
         prices_today = self._make_prices(base_today, today_hourly)
         prices_tomorrow = self._make_prices(base_tomorrow, tomorrow_hourly)
 
-        last_on = datetime(2026, 3, 17, 13, 15, 0, tzinfo=TZ)
+        # last_on = 12:30, deadline = 12:30 + 6h = 18:30, window ends at 18:30 + 1h = 19:30
+        last_on = now - timedelta(hours=2)
         schedule = build_minimum_runtime_schedule(
             raw_today=prices_today,
             raw_tomorrow=prices_tomorrow,
-            min_hours_on=4.0,
+            min_hours_on=1.0,
             now=now,
-            max_hours_off=24.0,
+            max_hours_off=6.0,
             last_on_time=last_on,
         )
 
-        rolling_window = timedelta(hours=28)
-        required_slots = 16
-        # Check slots >= now + min_hours_on: by then the coverage pass has
-        # had enough headroom to fill the rolling window.
-        check_from = now + timedelta(hours=4)
+        # Must have slots activated before the first deadline window ends
+        first_window_end = last_on + timedelta(hours=6.0 + 1.0)  # deadline + min_hours_on
+        active_before = [
+            s for s in schedule
+            if s["status"] == "active"
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) < first_window_end
+        ]
+        assert len(active_before) >= 4, (
+            f"Expected at least 4 active slots before first deadline window, "
+            f"got {len(active_before)}"
+        )
 
-        for s in schedule:
-            t = datetime.fromisoformat(s["time"]).astimezone(TZ)
-            if t < check_from:
-                continue
-            window_start = t - rolling_window
-            active = self._count_active_in_window(
-                schedule, window_start, t, TZ, last_on_time=last_on,
-            )
-            assert active >= required_slots, (
-                f"Rolling window ending at {t.isoformat()} has only {active} "
-                f"active slots (need {required_slots})"
-            )
-
-    def test_coverage_doesnt_add_unnecessary_slots(self, now, today_prices, tomorrow_prices):
-        """When the main loop already distributes well, coverage adds nothing."""
-        # Short max_hours_off forces the main loop to distribute across windows
+    def test_no_unnecessary_activations(self, now, today_prices, tomorrow_prices):
+        """The main loop should not over-activate beyond what's needed."""
         last_on = now - timedelta(hours=2)
         schedule = build_minimum_runtime_schedule(
             raw_today=today_prices,
@@ -1986,13 +1936,12 @@ class TestMinimumRuntimeRollingWindowCoverage:
         active = sum(1 for s in schedule if s["status"] == "active")
         # With 4h off + 1h on = 5h window, the main loop places ~1h per 5h
         # → ~6-7 windows in 33.5h of data → ~24-28 active slots.
-        # Coverage should not add significantly more.
         assert active <= 50, (
-            f"Too many active slots ({active}); coverage may be over-activating"
+            f"Too many active slots ({active}); main loop may be over-activating"
         )
 
-    def test_coverage_with_min_consecutive(self):
-        """Coverage enforcement works together with min_consecutive constraint."""
+    def test_min_consecutive_with_deadline(self):
+        """min_consecutive_hours works correctly with deadline windowing."""
         now = datetime(2026, 3, 17, 21, 0, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
         base_tomorrow = datetime(2026, 3, 18, tzinfo=TZ)
@@ -2014,26 +1963,24 @@ class TestMinimumRuntimeRollingWindowCoverage:
             min_consecutive_hours=0.5,
         )
 
-        # Even with consecutive enforcement, coverage should still have
-        # activated slots tonight (not just tomorrow morning).
-        tonight_active = [
-            s for s in schedule
-            if s["status"] == "active"
-            and now <= datetime.fromisoformat(s["time"]).astimezone(TZ)
-            < base_tomorrow
+        # After consecutive enforcement, no active block should be < 2 slots
+        blocks = _find_active_blocks(schedule)
+        future_blocks = [
+            (start, length) for start, length in blocks
+            if datetime.fromisoformat(schedule[start]["time"]).astimezone(TZ) >= now
         ]
-        assert len(tonight_active) > 0, (
-            "Combined consecutive + coverage should still activate slots tonight"
-        )
+        for start, length in future_blocks:
+            assert length >= 2, (
+                f"Block at index {start} has length {length}, "
+                "expected >= 2 for 0.5h min_consecutive"
+            )
 
-    def test_coverage_respects_always_expensive(self):
-        """Coverage enforcement should not activate slots above always_expensive."""
+    def test_respects_always_expensive(self):
+        """always_expensive prevents activation even with deadline pressure."""
         now = datetime(2026, 3, 17, 21, 0, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
         base_tomorrow = datetime(2026, 3, 18, tzinfo=TZ)
 
-        # Mix cheap (1.0) and expensive (5.0) prices.  Enough cheap slots
-        # across both scheduling windows so emergency activation never fires.
         today_hourly = [5.0] * 24
         # 10:00-14:00 cheap (window 1), 17:00-21:00 cheap (window 2)
         tomorrow_hourly = (
@@ -2054,9 +2001,7 @@ class TestMinimumRuntimeRollingWindowCoverage:
             always_expensive=4.0,
         )
 
-        # With enough cheap slots and always_expensive=4.0, no slot with
-        # price >= 4.0 should be active — neither from the main loop nor
-        # from coverage enforcement.
+        # No slot with price >= 4.0 should be active (except emergency)
         for s in schedule:
             t = datetime.fromisoformat(s["time"]).astimezone(TZ)
             if t < now:
@@ -2068,7 +2013,7 @@ class TestMinimumRuntimeRollingWindowCoverage:
                 )
 
     def test_first_run_no_last_on_time(self):
-        """On first run (no last_on_time), rolling window is covered after warmup."""
+        """On first run (no last_on_time), activates within the first window."""
         now = datetime(2026, 3, 17, 14, 30, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
         base_tomorrow = datetime(2026, 3, 18, tzinfo=TZ)
@@ -2093,9 +2038,10 @@ class TestMinimumRuntimeRollingWindowCoverage:
             f"Expected at least 16 active slots, got {len(active)}"
         )
 
-    def test_gap_from_last_on_to_first_active_bounded(self):
-        """The gap from last_on_time to the first future active slot should be
-        bounded — all required on-time should not cluster at the end of the window.
+    def test_gap_bounded_by_max_hours_off(self):
+        """The gap from last_on_time to the first activation must be
+        within max_hours_off — the main loop places slots before the
+        deadline, not 13+ hours later.
         """
         now = datetime(2026, 3, 17, 21, 0, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
@@ -2130,16 +2076,16 @@ class TestMinimumRuntimeRollingWindowCoverage:
         ).astimezone(TZ)
         gap_from_last_on = (first_active_time - last_on).total_seconds() / 3600
 
-        # The gap should be well under max_hours_off to allow for enough
-        # on-time within the rolling window.  With coverage enforcement, the
-        # first activation should be at or very near `now`, not 13+ hours later.
-        assert gap_from_last_on < 10.0, (
+        # The main loop's window extends from search_from to
+        # deadline + min_hours_on. The first activation must start within
+        # that window, so well under max_hours_off + min_hours_on from last_on.
+        assert gap_from_last_on <= 24.0 + 4.0, (
             f"Gap from last_on to first active is {gap_from_last_on:.1f}h, "
-            "expected < 10h with coverage enforcement"
+            "expected within the first deadline window (24+4=28h)"
         )
 
-    def test_small_rolling_window_fully_covered(self):
-        """With a small rolling window, the constraint can be fully verified."""
+    def test_small_rolling_window_fills_horizon(self):
+        """With a small rolling window, multiple blocks fill the horizon."""
         now = datetime(2026, 3, 17, 14, 30, 0, tzinfo=TZ)
         base_today = datetime(2026, 3, 17, tzinfo=TZ)
         base_tomorrow = datetime(2026, 3, 18, tzinfo=TZ)
@@ -2161,23 +2107,150 @@ class TestMinimumRuntimeRollingWindowCoverage:
             last_on_time=last_on,
         )
 
-        rolling_window = timedelta(hours=5)
-        required_slots = 4
-        # With a 5h window, slots >= now + 5h have a rolling window entirely
-        # in the future-from-now range, so the constraint should hold.
-        check_from = now + timedelta(hours=5)
+        # With 4h off + 1h on = 5h cycle over ~33.5h of data,
+        # should have multiple blocks distributed across the schedule.
+        blocks = _find_active_blocks(schedule)
+        future_blocks = [
+            (start, length) for start, length in blocks
+            if datetime.fromisoformat(schedule[start]["time"]).astimezone(TZ) >= now
+        ]
+        assert len(future_blocks) >= 4, (
+            f"Expected at least 4 future blocks with 4h max_off, "
+            f"got {len(future_blocks)}"
+        )
 
-        for s in schedule:
-            t = datetime.fromisoformat(s["time"]).astimezone(TZ)
-            if t < check_from:
-                continue
-            window_start = t - rolling_window
-            active = self._count_active_in_window(
-                schedule, window_start, t, TZ, last_on_time=last_on,
-            )
-            assert active >= required_slots, (
-                f"Rolling window ending at {t.isoformat()} has only {active} "
-                f"active slots (need {required_slots})"
-            )
+    def test_recently_on_device_picks_cheapest_in_window(self):
+        """When the device was just on, the scheduler picks cheapest slots
+        within the deadline window, not expensive near-term ones.
+        """
+        now = datetime(2026, 3, 20, 15, 18, 0, tzinfo=TZ)
+        base_today = datetime(2026, 3, 20, tzinfo=TZ)
+        base_tomorrow = datetime(2026, 3, 21, tzinfo=TZ)
 
+        # Expensive today afternoon/evening, very cheap tomorrow midday
+        today_hourly = (
+            [1.80] * 10  # 00-09: moderate overnight
+            + [1.00] * 3  # 10-12: dropping
+            + [0.50] * 3  # 13-15: cheap midday
+            + [2.00] * 4  # 16-19: expensive evening
+            + [1.80] * 4  # 20-23: evening decline
+        )
+        tomorrow_hourly = (
+            [0.80] * 10  # 00-09: moderate
+            + [0.30] * 2  # 10-11: fairly cheap
+            + [0.08] * 4  # 12-15: very cheap
+            + [1.50] * 4  # 16-19: expensive
+            + [0.80] * 4  # 20-23: moderate
+        )
+
+        prices_today = self._make_prices(base_today, today_hourly)
+        prices_tomorrow = self._make_prices(base_tomorrow, tomorrow_hourly)
+
+        # Device was just on 1 minute ago
+        last_on = now - timedelta(minutes=1)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices_today,
+            raw_tomorrow=prices_tomorrow,
+            min_hours_on=4.0,   # 16 slots
+            now=now,
+            max_hours_off=26.0,  # rolling_window = 30h
+            last_on_time=last_on,
+            min_consecutive_hours=0.5,
+        )
+
+        # The main loop should pick cheap slots tomorrow, not expensive ones now.
+        expensive_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and 2.0 <= s["price"]
+            and now <= datetime.fromisoformat(s["time"]).astimezone(TZ) < base_tomorrow
+        ]
+        assert len(expensive_active) == 0, (
+            f"Main loop activated {len(expensive_active)} expensive (>=2.0) slots "
+            f"today; expected 0 since the deadline is 26h away. Slots: "
+            + ", ".join(
+                f"{s['time']} @ {s['price']}" for s in expensive_active
+            )
+        )
+
+        # The cheapest slots tomorrow (price < 0.10) should be selected
+        cheap_tomorrow_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and s["price"] < 0.10
+        ]
+        assert len(cheap_tomorrow_active) >= 12, (
+            f"Expected at least 12 very cheap (<0.10) active slots, "
+            f"got {len(cheap_tomorrow_active)}"
+        )
+
+    def test_recompute_with_cheaper_tomorrow_prices(self):
+        """When new (even cheaper) tomorrow prices arrive, a recomputation
+        selects those cheaper slots instead of the previously scheduled ones.
+
+        Simulates: first run picks best 4h from today+tomorrow_day1.
+        Then new tomorrow_day2 prices arrive (much cheaper) and the schedule
+        is recomputed from a later `now` with last_on_time from the first block.
+        """
+        base_day1 = datetime(2026, 3, 21, tzinfo=TZ)
+        base_day2 = datetime(2026, 3, 22, tzinfo=TZ)
+
+        # Day 1: moderate prices, cheapest midday (0.30)
+        day1_hourly = (
+            [0.80] * 10   # 00-09
+            + [0.50] * 2  # 10-11
+            + [0.30] * 4  # 12-15: cheapest today
+            + [0.80] * 8  # 16-23
+        )
+        # Day 2 (new prices): very cheap midday (0.02)
+        day2_hourly = (
+            [0.60] * 10   # 00-09
+            + [0.20] * 2  # 10-11
+            + [0.02] * 4  # 12-15: much cheaper than day 1
+            + [0.60] * 8  # 16-23
+        )
+
+        prices_day1 = self._make_prices(base_day1, day1_hourly)
+        prices_day2 = self._make_prices(base_day2, day2_hourly)
+
+        # First run at 13:00 on day 1 picked 12:00-15:45 (the 0.30 block).
+        # Device finished running at ~16:00.
+        last_on = datetime(2026, 3, 21, 16, 0, 0, tzinfo=TZ)
+
+        # Recompute at 17:00 on day 1 when day 2 prices have just arrived.
+        now_recompute = datetime(2026, 3, 21, 17, 0, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices_day1,
+            raw_tomorrow=prices_day2,
+            min_hours_on=4.0,
+            now=now_recompute,
+            max_hours_off=26.0,
+            last_on_time=last_on,
+        )
+
+        # The deadline is 16:00 + 26h = Mar 22 18:00.
+        # The algorithm should pick the cheapest 4h in that window,
+        # which is the 0.02 block on day 2 (12:00-15:45).
+        very_cheap_active = [
+            s for s in schedule
+            if s["status"] == "active" and s["price"] <= 0.02
+        ]
+        assert len(very_cheap_active) == 16, (
+            f"Expected 16 very cheap (<=0.02) active slots from day 2, "
+            f"got {len(very_cheap_active)}"
+        )
+
+        # No expensive day 1 evening slots should be activated
+        day1_evening_active = [
+            s for s in schedule
+            if s["status"] == "active"
+            and s["price"] >= 0.80
+            and datetime.fromisoformat(s["time"]).astimezone(TZ) < base_day2
+        ]
+        assert len(day1_evening_active) == 0, (
+            f"Should not activate expensive day 1 evening slots, "
+            f"got {len(day1_evening_active)}"
+        )
 
