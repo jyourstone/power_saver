@@ -723,120 +723,6 @@ def build_lowest_price_schedule(
     return schedule
 
 
-# ---------------------------------------------------------------------------
-# Rolling window coverage enforcement (Minimum Runtime)
-# ---------------------------------------------------------------------------
-
-def _ensure_rolling_window_coverage(
-    schedule: list[dict],
-    required_slots: int,
-    rolling_window_hours: float,
-    last_on_time: datetime | None,
-    now: datetime,
-    inverted: bool,
-    always_cheap: float | None,
-    always_expensive: float | None,
-) -> list[dict]:
-    """Ensure the rolling window constraint is satisfied at every future point.
-
-    The main selection loop picks the cheapest slots per window, but price
-    clustering can leave long gaps where no slots are active.  This function
-    scans the schedule left-to-right and activates additional cheap slots
-    wherever the rolling window ending at that point would have fewer than
-    ``required_slots`` active slots.
-
-    Past on-time is approximated conservatively: only one slot (0.25 h) at
-    ``last_on_time`` is assumed, since the scheduler has no full history.
-
-    Args:
-        schedule: Time-sorted schedule (modified in-place).
-        required_slots: Minimum active slots per rolling window.
-        rolling_window_hours: Size of the rolling window in hours.
-        last_on_time: When the device was last active (may be ``None``).
-        now: Current datetime (timezone-aware).
-        inverted: If True, use inverted price selection.
-        always_cheap: In normal mode, never-activate floor; in inverted mode,
-            always-activate ceiling.
-        always_expensive: In normal mode, never-activate ceiling; in inverted
-            mode, always-activate floor.
-
-    Returns:
-        The modified schedule.
-    """
-    if not schedule or required_slots <= 0:
-        return schedule
-
-    rolling_window_td = timedelta(hours=rolling_window_hours)
-
-    # Pre-parse all slot times
-    slot_times: list[datetime] = [
-        datetime.fromisoformat(s["time"]).astimezone(now.tzinfo)
-        for s in schedule
-    ]
-
-    # Find the first future slot index (slots whose 15-min span hasn't ended)
-    current_idx = len(schedule)
-    for i, t in enumerate(slot_times):
-        if t + timedelta(minutes=15) > now:
-            current_idx = i
-            break
-
-    slots_added = 0
-
-    for i in range(current_idx, len(schedule)):
-        window_start = slot_times[i] - rolling_window_td
-
-        # Count active slots in [window_start, slot_times[i]]
-        active_count = 0
-        # Conservative past on-time: one slot at last_on_time
-        if last_on_time is not None and window_start <= last_on_time <= slot_times[i]:
-            active_count += 1
-
-        for j in range(len(schedule)):
-            if slot_times[j] < window_start:
-                continue
-            if slot_times[j] > slot_times[i]:
-                break
-            if schedule[j]["status"] == "active":
-                active_count += 1
-
-        if active_count >= required_slots:
-            continue
-
-        deficit = required_slots - active_count
-
-        # Collect eligible standby slots in [max(window_start, now), slot_times[i]]
-        # that we can still activate (only future slots).
-        candidates: list[tuple[int, float]] = []
-        for j in range(current_idx, i + 1):
-            if schedule[j]["status"] != "standby":
-                continue
-            if slot_times[j] < window_start:
-                continue
-            price = schedule[j]["price"]
-            if not inverted and always_expensive is not None and price >= always_expensive:
-                continue
-            if inverted and always_cheap is not None and price <= always_cheap:
-                continue
-            candidates.append((j, price))
-
-        # Sort by price preference
-        candidates.sort(key=lambda x: x[1], reverse=inverted)
-
-        for idx, _ in candidates[:deficit]:
-            schedule[idx]["status"] = "active"
-            slots_added += 1
-
-    if slots_added > 0:
-        total_active = sum(1 for s in schedule if s.get("status") == "active")
-        _LOGGER.info(
-            "Rolling window coverage: activated %d additional slots, "
-            "%d total active (%.1f hours)",
-            slots_added, total_active, total_active / 4.0,
-        )
-
-    return schedule
-
 
 # ---------------------------------------------------------------------------
 # Strategy: Minimum Runtime
@@ -1028,6 +914,20 @@ def build_minimum_runtime_schedule(
         next_deadline = max(raw_deadline, window_end_slot_time)
         search_from = window_end_idx
 
+        # If the next deadline is beyond the schedule data, stop.
+        # That window will be handled when the schedule is recomputed
+        # with new price data.
+        last_slot_time = datetime.fromisoformat(
+            schedule[-1]["time"]
+        ).astimezone(now.tzinfo)
+        if next_deadline > last_slot_time:
+            _LOGGER.debug(
+                "Next deadline %s is beyond schedule horizon %s — "
+                "deferring to next recomputation",
+                next_deadline.isoformat(), last_slot_time.isoformat(),
+            )
+            break
+
     # Apply always_cheap / always_expensive bonus activations
     for s in schedule:
         if s["status"] != "standby":
@@ -1045,21 +945,6 @@ def build_minimum_runtime_schedule(
             always_expensive, now=now, inverted=inverted,
             always_cheap=always_cheap,
         )
-
-    # Ensure rolling window coverage: the main loop selects cheapest slots
-    # per window but they can cluster, leaving gaps that violate the rolling
-    # window constraint.  This pass fills any remaining deficits.
-    rolling_window_hours = max_hours_off + min_hours_on
-    schedule = _ensure_rolling_window_coverage(
-        schedule,
-        required_slots=required_slots,
-        rolling_window_hours=rolling_window_hours,
-        last_on_time=last_on_time,
-        now=now,
-        inverted=inverted,
-        always_cheap=always_cheap,
-        always_expensive=always_expensive,
-    )
 
     active_count = sum(1 for s in schedule if s.get("status") == "active")
     _LOGGER.debug(
