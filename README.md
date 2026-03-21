@@ -31,6 +31,7 @@
 - **Excluded hours** — Block a time range from ever being activated (e.g., avoid grid fee peak hours)
 - **Multiple instances** — Add one per appliance (water heater, floor heating, pool pump, etc.)
 - **Always on / Always off** — Force all controlled entities ON or OFF via switches, bypassing the schedule
+- **Dynamic hours override** — Adjust scheduled hours at runtime via service calls (ideal for automations based on temperature, weather, etc.)
 - **Emergency mode** — Keeps appliances running if price data is unavailable
 - **No helpers needed** — All configuration is done through the integration's UI
 
@@ -149,6 +150,7 @@ Each instance creates the following sensors:
 | `max_price` | Highest price today |
 | `active_slots` | Total number of active slots in the schedule |
 | `strategy` | Current scheduling strategy (`lowest_price` or `minimum_runtime`) |
+| `schedule_hours_override` | Current hours override value (only present when an override is active) |
 
 ### Override switches
 
@@ -158,6 +160,41 @@ Each instance includes two override switches:
 - **Always off** — Forces all controlled entities OFF regardless of the schedule. The status sensor shows `forced_off`.
 
 The two switches are mutually exclusive — enabling one automatically disables the other. Turn both OFF to resume normal scheduling. Switch states persist across Home Assistant restarts.
+
+### Service calls
+
+Power Saver exposes two services for dynamically overriding the number of scheduled hours at runtime. This is useful when the required runtime depends on external factors like outdoor temperature, solar production, or weather forecasts — call the service from an automation to adjust the schedule on the fly.
+
+| Service | Description |
+|---------|-------------|
+| `power_saver.set_schedule_hours` | Override the number of hours to activate. Works for both strategies (Lowest Price: hours per period; Minimum Runtime: minimum hours on). The schedule is recomputed immediately. The override persists across restarts until cleared. |
+| `power_saver.clear_schedule_hours_override` | Remove a previously set override and revert to the value in the integration options. |
+
+Both services require a `device_id` parameter — the Power Saver device to target. In the UI the device picker only shows Power Saver devices.
+
+**Example automation** — Set heat pump runtime based on outdoor temperature:
+
+```yaml
+automation:
+  - alias: "Adjust heat pump runtime"
+    trigger:
+      - platform: time
+        at: "00:05:00"
+    action:
+      - service: power_saver.set_schedule_hours
+        data:
+          device_id: abc123  # Your Power Saver device ID
+          hours: >-
+            {% set temp = states('sensor.outdoor_temperature') | float(0) %}
+            {% if temp < -15 %}24
+            {% elif temp < -5 %}18
+            {% elif temp < 5 %}12
+            {% elif temp < 15 %}6
+            {% else %}0
+            {% endif %}
+```
+
+When an override is active, the status sensor exposes a `schedule_hours_override` attribute with the current value.
 
 ### Diagnostic sensors
 
