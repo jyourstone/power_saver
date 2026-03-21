@@ -52,6 +52,14 @@ DEFAULT_PERIOD_FROM = "00:00"
 DEFAULT_PERIOD_TO = "00:00"
 DEFAULT_ROLLING_WINDOW = 28.0
 
+# Service names
+SERVICE_SET_SCHEDULE_HOURS = "set_schedule_hours"
+SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE = "clear_schedule_hours_override"
+
+# Service / attribute keys
+ATTR_HOURS = "hours"
+ATTR_DEVICE_ID = "device_id"
+
 # Update interval in minutes
 UPDATE_INTERVAL_MINUTES = 15
 

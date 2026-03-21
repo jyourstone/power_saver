@@ -115,6 +115,7 @@ def test_status_sensor_icon_no_data():
 def test_status_sensor_attributes():
     """Test that main sensor exposes user-facing attributes including strategy."""
     coordinator = MagicMock()
+    coordinator.hours_override = None
     coordinator.data = PowerSaverData(
         current_state="active",
         current_price=0.1,

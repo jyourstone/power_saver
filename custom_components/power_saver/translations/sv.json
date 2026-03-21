@@ -197,5 +197,31 @@
         "name": "Alltid av"
       }
     }
+  },
+  "services": {
+    "set_schedule_hours": {
+      "name": "Ange schemalagda timmar",
+      "description": "Åsidosätt antalet timmar att aktivera per period (Lägsta pris) eller minsta antal timmar på (Minsta körtid). Schemat beräknas om direkt med det nya värdet. Åsidosättningen sparas mellan omstarter tills den rensas.",
+      "fields": {
+        "device_id": {
+          "name": "Enhet",
+          "description": "Power Saver-enheten att konfigurera."
+        },
+        "hours": {
+          "name": "Timmar",
+          "description": "Antal timmar att aktivera (0–24). Accepterar kvartsprecision (t.ex. 4,25 för 4 h 15 min)."
+        }
+      }
+    },
+    "clear_schedule_hours_override": {
+      "name": "Rensa åsidosättning av schemalagda timmar",
+      "description": "Ta bort en tidigare satt åsidosättning och återgå till värdet i integrationsinställningarna. Schemat beräknas om direkt.",
+      "fields": {
+        "device_id": {
+          "name": "Enhet",
+          "description": "Power Saver-enheten att konfigurera."
+        }
+      }
+    }
   }
 }

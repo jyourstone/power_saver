@@ -104,6 +104,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._locked_schedule: list[dict] | None = None
         self._schedule_has_tomorrow: bool = False
         self._options_fingerprint: str | None = None
+        self._hours_override: float | None = None
 
     @property
     def last_on_time(self) -> datetime | None:
@@ -119,6 +120,27 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
     def force_off_active(self) -> bool:
         """Return whether Always off is active."""
         return self._force_off
+
+    @property
+    def hours_override(self) -> float | None:
+        """Return the current hours override, or None if not set."""
+        return self._hours_override
+
+    async def async_set_hours_override(self, hours: float) -> None:
+        """Set a runtime hours override, replacing the config entry value."""
+        self._hours_override = hours
+        self._locked_schedule = None  # Force schedule recomputation
+        _LOGGER.info("Schedule hours override set to %s", hours)
+        await self._async_save_state()
+        await self.async_request_refresh()
+
+    async def async_clear_hours_override(self) -> None:
+        """Clear the runtime hours override, reverting to config entry value."""
+        self._hours_override = None
+        self._locked_schedule = None  # Force schedule recomputation
+        _LOGGER.info("Schedule hours override cleared")
+        await self._async_save_state()
+        await self.async_request_refresh()
 
     async def async_set_force_on(self, active: bool) -> None:
         """Set or clear the Always on state."""
@@ -223,6 +245,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         """Compute a deterministic fingerprint of schedule-affecting options."""
         options = self.config_entry.options
         relevant = {k: options.get(k) for k in self._SCHEDULE_OPTIONS_KEYS}
+        relevant["_hours_override"] = self._hours_override
         raw = json.dumps(relevant, sort_keys=True)
         return hashlib.md5(raw.encode()).hexdigest()
 
@@ -318,6 +341,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             min_hours = options.get(CONF_MIN_HOURS_ON, DEFAULT_MIN_HOURS_ON)
         else:
             min_hours = options.get(CONF_HOURS_PER_PERIOD, DEFAULT_HOURS_PER_PERIOD)
+        if self._hours_override is not None:
+            min_hours = self._hours_override
         always_cheap = options.get(CONF_ALWAYS_CHEAP)
         always_expensive = options.get(CONF_ALWAYS_EXPENSIVE)
         price_similarity_pct = options.get(CONF_PRICE_SIMILARITY_PCT)
@@ -519,6 +544,10 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                     )
                 except (ValueError, TypeError):
                     self._last_on_time = None
+            hours_override = data.get("hours_override")
+            if hours_override is not None:
+                self._hours_override = hours_override
+                _LOGGER.info("Restored hours_override: %s", hours_override)
         except Exception:
             _LOGGER.exception("Failed to load state from storage")
 
@@ -532,6 +561,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                         if self._last_on_time
                         else None
                     ),
+                    "hours_override": self._hours_override,
                 }
             )
         except Exception:

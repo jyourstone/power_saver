@@ -197,5 +197,31 @@
         "name": "Always off"
       }
     }
+  },
+  "services": {
+    "set_schedule_hours": {
+      "name": "Set schedule hours",
+      "description": "Override the number of hours to activate per period (Lowest Price) or minimum hours on (Minimum Runtime). The schedule is recomputed immediately with the new value. The override persists across restarts until cleared.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Power Saver device to configure."
+        },
+        "hours": {
+          "name": "Hours",
+          "description": "Number of hours to activate (0–24). Accepts quarter-hour precision (e.g., 4.25 for 4 h 15 min)."
+        }
+      }
+    },
+    "clear_schedule_hours_override": {
+      "name": "Clear schedule hours override",
+      "description": "Remove a previously set hours override and revert to the value configured in the integration options. The schedule is recomputed immediately.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Power Saver device to configure."
+        }
+      }
+    }
   }
 }

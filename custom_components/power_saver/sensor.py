@@ -90,13 +90,16 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
         if self.coordinator.data is None:
             return {}
         data: PowerSaverData = self.coordinator.data
-        return {
+        attrs = {
             "current_price": data.current_price,
             "min_price": data.min_price,
             "max_price": data.max_price,
             "active_slots": data.active_slots,
             "strategy": data.strategy,
         }
+        if self.coordinator.hours_override is not None:
+            attrs["schedule_hours_override"] = self.coordinator.hours_override
+        return attrs
 
 
 # --- Diagnostic sensors ---
