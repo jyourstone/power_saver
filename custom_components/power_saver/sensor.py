@@ -44,6 +44,8 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [STATE_ACTIVE, STATE_STANDBY, STATE_EXCLUDED, STATE_FORCED_ON, STATE_FORCED_OFF]
 
     def __init__(
         self, coordinator: PowerSaverCoordinator, entry: ConfigEntry
