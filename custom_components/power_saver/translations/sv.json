@@ -162,7 +162,14 @@
   "entity": {
     "sensor": {
       "status": {
-        "name": "Status"
+        "name": "Status",
+        "state": {
+          "active": "Aktiv",
+          "standby": "Standby",
+          "excluded": "Exkluderad",
+          "forced_on": "Tvingad på",
+          "forced_off": "Tvingad av"
+        }
       },
       "schedule": {
         "name": "Schema"
