@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 
 try:
@@ -90,13 +91,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             """Handle the set_schedule_hours service call."""
             device_id = call.data[ATTR_DEVICE_ID]
             hours = call.data[ATTR_HOURS]
-            coord = _find_coordinator(hass, device_id)
+            try:
+                coord = _find_coordinator(hass, device_id)
+            except ValueError as err:
+                raise HomeAssistantError(
+                    f"Device {device_id} not found or not a Power Saver device"
+                ) from err
             await coord.async_set_hours_override(hours)
 
         async def handle_clear_override(call: ServiceCall) -> None:
             """Handle the clear_schedule_hours_override service call."""
             device_id = call.data[ATTR_DEVICE_ID]
-            coord = _find_coordinator(hass, device_id)
+            try:
+                coord = _find_coordinator(hass, device_id)
+            except ValueError as err:
+                raise HomeAssistantError(
+                    f"Device {device_id} not found or not a Power Saver device"
+                ) from err
             await coord.async_clear_hours_override()
 
         hass.services.async_register(
@@ -130,7 +141,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     # Remove services when the last entry is unloaded.
-    if not hass.data.get(DOMAIN):
+    if unload_ok and not hass.data.get(DOMAIN):
         hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE_HOURS)
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE)
 

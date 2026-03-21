@@ -546,8 +546,14 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                     self._last_on_time = None
             hours_override = data.get("hours_override")
             if hours_override is not None:
-                self._hours_override = hours_override
-                _LOGGER.info("Restored hours_override: %s", hours_override)
+                if isinstance(hours_override, (int, float)) and 0 <= hours_override <= 24:
+                    self._hours_override = hours_override
+                    _LOGGER.info("Restored hours_override: %s", hours_override)
+                else:
+                    _LOGGER.warning(
+                        "Ignoring invalid hours_override from storage: %r",
+                        hours_override,
+                    )
         except Exception:
             _LOGGER.exception("Failed to load state from storage")
 

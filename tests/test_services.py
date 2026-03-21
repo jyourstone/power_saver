@@ -16,9 +16,12 @@ from custom_components.power_saver.coordinator import PowerSaverCoordinator
 
 def test_hours_override_default_is_none():
     """Test the hours override is None by default."""
-    coordinator = MagicMock(spec=PowerSaverCoordinator)
-    coordinator._hours_override = None
-    assert coordinator._hours_override is None
+    with patch(
+        "custom_components.power_saver.coordinator.DataUpdateCoordinator.__init__"
+    ):
+        coordinator = PowerSaverCoordinator.__new__(PowerSaverCoordinator)
+        coordinator._hours_override = None
+        assert coordinator._hours_override is None
 
 
 async def test_async_set_hours_override():
@@ -83,7 +86,7 @@ async def test_async_clear_hours_override():
         assert saved_data["hours_override"] is None
 
 
-async def test_hours_override_included_in_fingerprint():
+def test_hours_override_included_in_fingerprint():
     """Test that changing hours_override changes the options fingerprint."""
     hass = MagicMock()
     entry = make_config_entry()
