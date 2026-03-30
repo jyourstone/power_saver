@@ -234,6 +234,16 @@ now:
 graph_span: 2d
 span:
   start: day
+yaxis:
+  - id: price
+    show: true
+  - id: usage
+    show: true
+    opposite: true
+  - id: powersaver
+    show: false
+    min: 0
+    max: 1
 apex_config:
   stroke:
     width: 2
@@ -254,24 +264,14 @@ apex_config:
   legend:
     show: false
   yaxis:
-    - id: price
-      show: true
-      decimalsInFloat: 1
+    - decimalsInFloat: 1
       floating: false
       forceNiceScale: true
-      extend_to: end
-    - id: usage
-      show: true
-      opposite: true
-      decimalsInFloat: 0
+    - decimalsInFloat: 0
       floating: false
       forceNiceScale: true
-      extend_to: end
-    - id: powersaver
-      show: false
-      decimalsInFloat: 0
+    - decimalsInFloat: 0
       floating: false
-      extend_to: now
 series:
   - entity: sensor.heater_power_saver_schedule
     yaxis_id: price
@@ -292,14 +292,13 @@ series:
         return [new Date(entry.time).getTime(), entry.status === "active" ? 1 : 0];
       });
     yaxis_id: powersaver
+    extend_to: now
     name: " "
     type: area
     color: rgb(0, 255, 0)
     opacity: 0.2
     stroke_width: 0
     curve: stepline
-    group_by:
-      func: min
     show:
       legend_value: false
       in_header: false
