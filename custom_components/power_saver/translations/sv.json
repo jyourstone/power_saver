@@ -182,6 +182,12 @@
       },
       "next_change": {
         "name": "Nästa ändring"
+      },
+      "next_active": {
+        "name": "Nästa aktiv"
+      },
+      "next_inactive": {
+        "name": "Nästa inaktiv"
       }
     },
     "binary_sensor": {

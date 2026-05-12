@@ -1104,3 +1104,53 @@ def find_next_change(
     return None
 
 
+def _find_next_active_boundary(
+    schedule: list[dict],
+    current_slot: dict | None,
+    now: datetime,
+    target_active: bool,
+) -> str | None:
+    """Find the next transition into or out of active state."""
+    if current_slot is None:
+        return None
+
+    previous_active = current_slot.get("status") == "active"
+
+    for slot in schedule:
+        try:
+            slot_time = datetime.fromisoformat(slot["time"]).astimezone(now.tzinfo)
+        except (KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Skipping malformed schedule entry while finding active boundary: %s (%s)",
+                slot,
+                exc,
+            )
+            continue
+        if slot_time <= now:
+            continue
+
+        slot_active = slot.get("status") == "active"
+        if slot_active != previous_active:
+            if slot_active == target_active:
+                return slot["time"]
+            previous_active = slot_active
+
+    return None
+
+
+def find_next_active(
+    schedule: list[dict],
+    current_slot: dict | None,
+    now: datetime,
+) -> str | None:
+    """Find the ISO timestamp of the next transition into active state."""
+    return _find_next_active_boundary(schedule, current_slot, now, True)
+
+
+def find_next_inactive(
+    schedule: list[dict],
+    current_slot: dict | None,
+    now: datetime,
+) -> str | None:
+    """Find the ISO timestamp of the next transition out of active state."""
+    return _find_next_active_boundary(schedule, current_slot, now, False)

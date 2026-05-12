@@ -71,6 +71,8 @@ class PowerSaverData:
     min_price: float | None = None
     max_price: float | None = None
     next_change: str | None = None
+    next_active: str | None = None
+    next_inactive: str | None = None
     active_slots: int = 0
     active_hours_in_period: float = 0.0
     strategy: str = STRATEGY_LOWEST_PRICE
@@ -452,6 +454,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
         # Find next state change
         next_change = scheduler.find_next_change(schedule, current_slot, now)
+        next_active = scheduler.find_next_active(schedule, current_slot, now)
+        next_inactive = scheduler.find_next_inactive(schedule, current_slot, now)
 
         # Calculate min/max price from today
         today_prices = [s.get("value") for s in raw_today if s.get("value") is not None]
@@ -499,6 +503,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             min_price=min_price,
             max_price=max_price,
             next_change=next_change,
+            next_active=next_active,
+            next_inactive=next_inactive,
             active_slots=active_slots,
             active_hours_in_period=active_hours_in_period,
             strategy=strategy,

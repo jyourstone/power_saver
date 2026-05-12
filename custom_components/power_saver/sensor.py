@@ -34,6 +34,8 @@ async def async_setup_entry(
         LastActiveSensor(coordinator, entry),
         ActiveHoursInPeriodSensor(coordinator, entry),
         NextChangeSensor(coordinator, entry),
+        NextActiveSensor(coordinator, entry),
+        NextInactiveSensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
@@ -224,3 +226,51 @@ class NextChangeSensor(_DiagnosticBase):
         return datetime.fromisoformat(self.coordinator.data.next_change)
 
 
+class NextActiveSensor(_DiagnosticBase):
+    """Diagnostic sensor showing when the schedule next becomes active."""
+
+    _attr_translation_key = "next_active"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return timestamp of next active transition."""
+        if (
+            self.coordinator.data is None
+            or self.coordinator.data.next_active is None
+        ):
+            return None
+        try:
+            return datetime.fromisoformat(self.coordinator.data.next_active)
+        except (TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Invalid next_active timestamp %r: %s",
+                self.coordinator.data.next_active,
+                exc,
+            )
+            return None
+
+
+class NextInactiveSensor(_DiagnosticBase):
+    """Diagnostic sensor showing when the schedule next becomes inactive."""
+
+    _attr_translation_key = "next_inactive"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return timestamp of next inactive transition."""
+        if (
+            self.coordinator.data is None
+            or self.coordinator.data.next_inactive is None
+        ):
+            return None
+        try:
+            return datetime.fromisoformat(self.coordinator.data.next_inactive)
+        except (TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Invalid next_inactive timestamp %r: %s",
+                self.coordinator.data.next_inactive,
+                exc,
+            )
+            return None
