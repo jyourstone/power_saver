@@ -204,6 +204,8 @@ When an override is active, the status sensor exposes a `schedule_hours_override
 | **Last Active** | Sensor | Timestamp of the most recent past active slot |
 | **Active Hours in Period** | Sensor | Scheduled active hours in the current period |
 | **Next Change** | Sensor | Timestamp of the next state transition |
+| **Next Active** | Sensor | Timestamp of the next transition into an active slot |
+| **Next Inactive** | Sensor | Timestamp of the next transition out of an active slot |
 | **Emergency Mode** | Binary sensor | Indicates if running without price data (problem badge) |
 
 ## Upgrading to v3.x

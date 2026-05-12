@@ -34,6 +34,8 @@ async def async_setup_entry(
         LastActiveSensor(coordinator, entry),
         ActiveHoursInPeriodSensor(coordinator, entry),
         NextChangeSensor(coordinator, entry),
+        NextActiveSensor(coordinator, entry),
+        NextInactiveSensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
@@ -223,4 +225,37 @@ class NextChangeSensor(_DiagnosticBase):
             return None
         return datetime.fromisoformat(self.coordinator.data.next_change)
 
+
+class NextActiveSensor(_DiagnosticBase):
+    """Diagnostic sensor showing when the schedule next becomes active."""
+
+    _attr_translation_key = "next_active"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return timestamp of next active transition."""
+        if (
+            self.coordinator.data is None
+            or self.coordinator.data.next_active is None
+        ):
+            return None
+        return datetime.fromisoformat(self.coordinator.data.next_active)
+
+
+class NextInactiveSensor(_DiagnosticBase):
+    """Diagnostic sensor showing when the schedule next becomes inactive."""
+
+    _attr_translation_key = "next_inactive"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return timestamp of next inactive transition."""
+        if (
+            self.coordinator.data is None
+            or self.coordinator.data.next_inactive is None
+        ):
+            return None
+        return datetime.fromisoformat(self.coordinator.data.next_inactive)
 

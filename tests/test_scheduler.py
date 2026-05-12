@@ -22,6 +22,8 @@ import scheduler  # noqa: E402
 build_schedule = scheduler.build_schedule
 find_current_slot = scheduler.find_current_slot
 find_next_change = scheduler.find_next_change
+find_next_active = scheduler.find_next_active
+find_next_inactive = scheduler.find_next_inactive
 build_lowest_price_schedule = scheduler.build_lowest_price_schedule
 build_minimum_runtime_schedule = scheduler.build_minimum_runtime_schedule
 _partition_into_periods = scheduler._partition_into_periods
@@ -345,6 +347,90 @@ class TestFindNextChange:
         """Should return None when current_slot is None."""
         now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
         assert find_next_change([], None, now) is None
+
+
+class TestFindNextActiveInactive:
+    """Tests for active/non-active transition helpers."""
+
+    def test_inactive_now_finds_next_active(self):
+        """Next active should find the first future transition into active."""
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule = [
+            {"price": 0.50, "time": "2026-02-06T10:00:00+01:00", "status": "standby"},
+            {"price": 0.60, "time": "2026-02-06T11:00:00+01:00", "status": "standby"},
+            {"price": 0.10, "time": "2026-02-06T12:00:00+01:00", "status": "active"},
+        ]
+
+        assert find_next_active(schedule, schedule[0], now) == "2026-02-06T12:00:00+01:00"
+
+    def test_active_now_finds_next_inactive(self):
+        """Next inactive should find the first future transition out of active."""
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule = [
+            {"price": 0.10, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
+            {"price": 0.10, "time": "2026-02-06T11:00:00+01:00", "status": "active"},
+            {"price": 0.50, "time": "2026-02-06T12:00:00+01:00", "status": "standby"},
+        ]
+
+        assert find_next_inactive(schedule, schedule[0], now) == "2026-02-06T12:00:00+01:00"
+
+    def test_active_now_next_active_skips_current_block(self):
+        """Next active should skip the current active block and find re-entry."""
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule = [
+            {"price": 0.10, "time": "2026-02-06T10:00:00+01:00", "status": "active"},
+            {"price": 0.10, "time": "2026-02-06T11:00:00+01:00", "status": "active"},
+            {"price": 0.50, "time": "2026-02-06T12:00:00+01:00", "status": "standby"},
+            {"price": 0.20, "time": "2026-02-06T13:00:00+01:00", "status": "active"},
+        ]
+
+        assert find_next_active(schedule, schedule[0], now) == "2026-02-06T13:00:00+01:00"
+
+    def test_inactive_now_next_inactive_waits_for_active_block_to_end(self):
+        """Next inactive should be None until a future active block later ends."""
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule_without_end = [
+            {"price": 0.50, "time": "2026-02-06T10:00:00+01:00", "status": "standby"},
+            {"price": 0.10, "time": "2026-02-06T11:00:00+01:00", "status": "active"},
+            {"price": 0.10, "time": "2026-02-06T12:00:00+01:00", "status": "active"},
+        ]
+        schedule_with_end = [
+            *schedule_without_end,
+            {"price": 0.60, "time": "2026-02-06T13:00:00+01:00", "status": "standby"},
+        ]
+
+        assert find_next_inactive(schedule_without_end, schedule_without_end[0], now) is None
+        assert (
+            find_next_inactive(schedule_with_end, schedule_with_end[0], now)
+            == "2026-02-06T13:00:00+01:00"
+        )
+
+    def test_standby_excluded_transitions_are_ignored(self):
+        """Non-active status changes should not count as active boundaries."""
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule = [
+            {"price": 0.50, "time": "2026-02-06T10:00:00+01:00", "status": "standby"},
+            {"price": 0.60, "time": "2026-02-06T11:00:00+01:00", "status": "excluded"},
+            {"price": 0.55, "time": "2026-02-06T12:00:00+01:00", "status": "standby"},
+            {"price": 0.10, "time": "2026-02-06T13:00:00+01:00", "status": "active"},
+            {"price": 0.70, "time": "2026-02-06T14:00:00+01:00", "status": "excluded"},
+        ]
+
+        assert find_next_active(schedule, schedule[0], now) == "2026-02-06T13:00:00+01:00"
+        assert find_next_inactive(schedule, schedule[0], now) == "2026-02-06T14:00:00+01:00"
+
+    def test_returns_none_without_current_slot_or_matching_transition(self):
+        """Helpers should return None with no current slot or no matching transition."""
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule = [
+            {"price": 0.50, "time": "2026-02-06T10:00:00+01:00", "status": "standby"},
+            {"price": 0.60, "time": "2026-02-06T11:00:00+01:00", "status": "excluded"},
+        ]
+
+        assert find_next_active(schedule, None, now) is None
+        assert find_next_inactive(schedule, None, now) is None
+        assert find_next_active(schedule, schedule[0], now) is None
+        assert find_next_inactive(schedule, schedule[0], now) is None
 
 
 class TestFindActiveBlocks:
@@ -2253,4 +2339,3 @@ class TestMinimumRuntimeDeadlineWindowing:
             f"Should not activate expensive day 1 evening slots, "
             f"got {len(day1_evening_active)}"
         )
-

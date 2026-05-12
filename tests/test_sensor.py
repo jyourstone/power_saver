@@ -15,7 +15,9 @@ from custom_components.power_saver.coordinator import PowerSaverData
 from custom_components.power_saver.sensor import (
     ActiveHoursInPeriodSensor,
     LastActiveSensor,
+    NextActiveSensor,
     NextChangeSensor,
+    NextInactiveSensor,
     PowerSaverSensor,
     ScheduleSensor,
 )
@@ -401,7 +403,96 @@ def test_next_change_sensor_no_data():
     assert sensor.native_value is None
 
 
-# --- Hours Until Deadline diagnostic sensor ---
+# --- Next Active diagnostic sensor ---
+
+
+def test_next_active_sensor_device_class():
+    """Test next active sensor has timestamp device class."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = NextActiveSensor(coordinator, make_config_entry())
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+
+
+def test_next_active_sensor_unique_id():
+    """Test next active sensor unique ID."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = NextActiveSensor(coordinator, make_config_entry("abc"))
+    assert sensor.unique_id == "abc_next_active"
+
+
+def test_next_active_sensor_native_value():
+    """Test next active sensor returns parsed datetime."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(
+        next_active="2026-02-06T11:00:00+01:00"
+    )
+    sensor = NextActiveSensor(coordinator, make_config_entry())
+    expected = datetime(2026, 2, 6, 11, 0, tzinfo=timezone(timedelta(hours=1)))
+    assert sensor.native_value == expected
+
+
+def test_next_active_sensor_no_data():
+    """Test next active sensor returns None when no data."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(next_active=None)
+    sensor = NextActiveSensor(coordinator, make_config_entry())
+    assert sensor.native_value is None
+
+
+def test_next_active_sensor_no_coordinator_data():
+    """Test next active sensor returns None when coordinator has no data."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = NextActiveSensor(coordinator, make_config_entry())
+    assert sensor.native_value is None
+
+
+# --- Next Inactive diagnostic sensor ---
+
+
+def test_next_inactive_sensor_device_class():
+    """Test next inactive sensor has timestamp device class."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = NextInactiveSensor(coordinator, make_config_entry())
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+
+
+def test_next_inactive_sensor_unique_id():
+    """Test next inactive sensor unique ID."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData()
+    sensor = NextInactiveSensor(coordinator, make_config_entry("abc"))
+    assert sensor.unique_id == "abc_next_inactive"
+
+
+def test_next_inactive_sensor_native_value():
+    """Test next inactive sensor returns parsed datetime."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(
+        next_inactive="2026-02-06T12:00:00+01:00"
+    )
+    sensor = NextInactiveSensor(coordinator, make_config_entry())
+    expected = datetime(2026, 2, 6, 12, 0, tzinfo=timezone(timedelta(hours=1)))
+    assert sensor.native_value == expected
+
+
+def test_next_inactive_sensor_no_data():
+    """Test next inactive sensor returns None when no data."""
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(next_inactive=None)
+    sensor = NextInactiveSensor(coordinator, make_config_entry())
+    assert sensor.native_value is None
+
+
+def test_next_inactive_sensor_no_coordinator_data():
+    """Test next inactive sensor returns None when coordinator has no data."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = NextInactiveSensor(coordinator, make_config_entry())
+    assert sensor.native_value is None
 
 
 # --- All diagnostic sensors share base properties ---
@@ -418,6 +509,8 @@ def test_all_diagnostic_sensors_are_diagnostic():
         LastActiveSensor,
         ActiveHoursInPeriodSensor,
         NextChangeSensor,
+        NextActiveSensor,
+        NextInactiveSensor,
     ):
         sensor = cls(coordinator, entry)
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC, (
