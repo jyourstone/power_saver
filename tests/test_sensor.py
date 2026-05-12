@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -449,6 +450,18 @@ def test_next_active_sensor_no_coordinator_data():
     assert sensor.native_value is None
 
 
+def test_next_active_sensor_malformed_value(caplog):
+    """Test next active sensor returns None for malformed timestamps."""
+    caplog.set_level(logging.WARNING)
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(next_active="not-a-timestamp")
+    sensor = NextActiveSensor(coordinator, make_config_entry())
+
+    assert sensor.native_value is None
+    assert "Invalid next_active timestamp" in caplog.text
+    assert "not-a-timestamp" in caplog.text
+
+
 # --- Next Inactive diagnostic sensor ---
 
 
@@ -493,6 +506,18 @@ def test_next_inactive_sensor_no_coordinator_data():
     coordinator.data = None
     sensor = NextInactiveSensor(coordinator, make_config_entry())
     assert sensor.native_value is None
+
+
+def test_next_inactive_sensor_malformed_value(caplog):
+    """Test next inactive sensor returns None for malformed timestamps."""
+    caplog.set_level(logging.WARNING)
+    coordinator = MagicMock()
+    coordinator.data = PowerSaverData(next_inactive="not-a-timestamp")
+    sensor = NextInactiveSensor(coordinator, make_config_entry())
+
+    assert sensor.native_value is None
+    assert "Invalid next_inactive timestamp" in caplog.text
+    assert "not-a-timestamp" in caplog.text
 
 
 # --- All diagnostic sensors share base properties ---

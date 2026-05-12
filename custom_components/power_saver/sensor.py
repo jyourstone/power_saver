@@ -240,7 +240,15 @@ class NextActiveSensor(_DiagnosticBase):
             or self.coordinator.data.next_active is None
         ):
             return None
-        return datetime.fromisoformat(self.coordinator.data.next_active)
+        try:
+            return datetime.fromisoformat(self.coordinator.data.next_active)
+        except (TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Invalid next_active timestamp %r: %s",
+                self.coordinator.data.next_active,
+                exc,
+            )
+            return None
 
 
 class NextInactiveSensor(_DiagnosticBase):
@@ -257,5 +265,12 @@ class NextInactiveSensor(_DiagnosticBase):
             or self.coordinator.data.next_inactive is None
         ):
             return None
-        return datetime.fromisoformat(self.coordinator.data.next_inactive)
-
+        try:
+            return datetime.fromisoformat(self.coordinator.data.next_inactive)
+        except (TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Invalid next_inactive timestamp %r: %s",
+                self.coordinator.data.next_inactive,
+                exc,
+            )
+            return None

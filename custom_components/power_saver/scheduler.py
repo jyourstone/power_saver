@@ -1117,7 +1117,15 @@ def _find_next_active_boundary(
     previous_active = current_slot.get("status") == "active"
 
     for slot in schedule:
-        slot_time = datetime.fromisoformat(slot["time"]).astimezone(now.tzinfo)
+        try:
+            slot_time = datetime.fromisoformat(slot["time"]).astimezone(now.tzinfo)
+        except (KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Skipping malformed schedule entry while finding active boundary: %s (%s)",
+                slot,
+                exc,
+            )
+            continue
         if slot_time <= now:
             continue
 
@@ -1146,4 +1154,3 @@ def find_next_inactive(
 ) -> str | None:
     """Find the ISO timestamp of the next transition out of active state."""
     return _find_next_active_boundary(schedule, current_slot, now, False)
-

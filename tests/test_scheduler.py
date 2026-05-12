@@ -8,6 +8,7 @@ installed.
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -362,6 +363,20 @@ class TestFindNextActiveInactive:
         ]
 
         assert find_next_active(schedule, schedule[0], now) == "2026-02-06T12:00:00+01:00"
+
+    def test_malformed_future_slot_is_skipped(self, caplog):
+        """Malformed future slot timestamps should not break boundary lookup."""
+        caplog.set_level(logging.WARNING, logger="scheduler")
+        now = datetime(2026, 2, 6, 10, 30, 0, tzinfo=TZ)
+        schedule = [
+            {"price": 0.50, "time": "2026-02-06T10:00:00+01:00", "status": "standby"},
+            {"price": 0.60, "time": "bad timestamp", "status": "active"},
+            {"price": 0.10, "time": "2026-02-06T12:00:00+01:00", "status": "active"},
+        ]
+
+        assert find_next_active(schedule, schedule[0], now) == "2026-02-06T12:00:00+01:00"
+        assert "Skipping malformed schedule entry while finding active boundary" in caplog.text
+        assert "bad timestamp" in caplog.text
 
     def test_active_now_finds_next_inactive(self):
         """Next inactive should find the first future transition out of active."""
