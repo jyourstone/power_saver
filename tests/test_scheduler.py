@@ -1527,6 +1527,55 @@ class TestLowestPriceStrategy:
         assert len(today_active) >= 4
         assert len(tomorrow_active) >= 4
 
+    def test_custom_period_consecutive_does_not_migrate_outside_periods(self, now):
+        """Consecutive enforcement keeps custom-period quota inside each period.
+
+        Regression test for 00:00-04:00 with 1h quota and 1h minimum
+        consecutive runtime: consolidation previously moved both days' quota to
+        tomorrow afternoon because that was globally cheaper.
+        """
+        today_prices = []
+        tomorrow_prices = []
+        for hour in range(24):
+            for quarter in range(4):
+                cheap_scattered = hour in (0, 1, 2, 3) and quarter == 0
+                today_price = 0.10 if cheap_scattered else 2.00
+                tomorrow_price = 0.20 if cheap_scattered else 2.00
+                if 12 <= hour <= 14:
+                    tomorrow_price = 0.01
+                today_prices.append(make_nordpool_slot(hour, today_price, quarter=quarter))
+                tomorrow_prices.append(
+                    make_nordpool_slot(hour, tomorrow_price, day_offset=1, quarter=quarter)
+                )
+
+        schedule = build_lowest_price_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+            period_from="00:00:00",
+            period_to="04:00:00",
+            min_consecutive_hours=1.0,
+        )
+
+        active = [s for s in schedule if s["status"] == "active"]
+        assert len(active) == 8
+        for slot in active:
+            slot_time = datetime.fromisoformat(slot["time"]).astimezone(TZ)
+            assert 0 <= slot_time.hour < 4, (
+                f"Active slot at {slot_time.isoformat()} is outside 00:00-04:00"
+            )
+
+        for day_offset in (0, 1):
+            day = now.date() + timedelta(days=day_offset)
+            day_active = [
+                s for s in active
+                if datetime.fromisoformat(s["time"]).astimezone(TZ).date() == day
+            ]
+            assert len(day_active) == 4, (
+                f"Expected 4 active slots on {day}, got {len(day_active)}"
+            )
+
 
 class TestMinimumRuntimeStrategy:
     """Tests for the Minimum Runtime scheduling strategy."""

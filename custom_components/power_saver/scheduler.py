@@ -708,10 +708,17 @@ def build_lowest_price_schedule(
                 for local_i, global_i in enumerate(day_indices):
                     schedule[global_i] = sub[local_i]
         else:
-            schedule = _enforce_min_consecutive(
-                schedule, min_consecutive_hours, min_hours, always_expensive,
-                now=now, inverted=inverted, always_cheap=always_cheap,
-            )
+            # Custom period mode has an independent quota per period, so
+            # consecutive consolidation must stay inside those same bounds.
+            periods = _partition_into_periods(schedule, period_from, period_to, now)
+            for period_indices in periods:
+                sub = [schedule[i] for i in period_indices]
+                sub = _enforce_min_consecutive(
+                    sub, min_consecutive_hours, min_hours, always_expensive,
+                    now=now, inverted=inverted, always_cheap=always_cheap,
+                )
+                for local_i, global_i in enumerate(period_indices):
+                    schedule[global_i] = sub[local_i]
 
     # Log statistics
     active_count = sum(1 for s in schedule if s.get("status") == "active")
@@ -1102,7 +1109,6 @@ def find_next_change(
             return slot["time"]
 
     return None
-
 
 def _find_next_active_boundary(
     schedule: list[dict],
