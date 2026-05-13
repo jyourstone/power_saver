@@ -39,3 +39,47 @@ clear_schedule_hours_override:
       selector:
         device:
           integration: power_saver
+
+set_exclude_times:
+  name: Set exclude times
+  description: >-
+    Override the excluded time range. Slots during this period are never
+    activated. The schedule is recomputed immediately with the new range. The
+    override persists across restarts until cleared.
+  fields:
+    device_id:
+      name: Device
+      description: The Power Saver device to configure.
+      required: true
+      selector:
+        device:
+          integration: power_saver
+    exclude_from:
+      name: Exclude from
+      description: >-
+        Start of the excluded time range. Supports HH:MM and HH:MM:SS.
+      required: true
+      selector:
+        time:
+    exclude_until:
+      name: Exclude until
+      description: >-
+        End of the excluded time range. Supports HH:MM and HH:MM:SS.
+      required: true
+      selector:
+        time:
+
+clear_exclude_times_override:
+  name: Clear exclude times override
+  description: >-
+    Remove a previously set exclude times override and revert to the excluded
+    time range configured in the integration options. The schedule is
+    recomputed immediately.
+  fields:
+    device_id:
+      name: Device
+      description: The Power Saver device to configure.
+      required: true
+      selector:
+        device:
+          integration: power_saver

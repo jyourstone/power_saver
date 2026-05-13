@@ -228,6 +228,34 @@
           "description": "Power Saver-enheten att konfigurera."
         }
       }
+    },
+    "set_exclude_times": {
+      "name": "Ange exkluderade tider",
+      "description": "Åsidosätt den exkluderade tidsperioden. Tidsluckor under denna period aktiveras aldrig. Schemat beräknas om direkt med den nya perioden. Åsidosättningen sparas mellan omstarter tills den rensas.",
+      "fields": {
+        "device_id": {
+          "name": "Enhet",
+          "description": "Power Saver-enheten att konfigurera."
+        },
+        "exclude_from": {
+          "name": "Exkludera från",
+          "description": "Start på den exkluderade tidsperioden. Stöder HH:MM och HH:MM:SS."
+        },
+        "exclude_until": {
+          "name": "Exkludera till",
+          "description": "Slut på den exkluderade tidsperioden. Stöder HH:MM och HH:MM:SS."
+        }
+      }
+    },
+    "clear_exclude_times_override": {
+      "name": "Rensa åsidosättning av exkluderade tider",
+      "description": "Ta bort en tidigare satt åsidosättning av exkluderade tider och återgå till den exkluderade tidsperioden i integrationsinställningarna. Schemat beräknas om direkt.",
+      "fields": {
+        "device_id": {
+          "name": "Enhet",
+          "description": "Power Saver-enheten att konfigurera."
+        }
+      }
     }
   }
 }

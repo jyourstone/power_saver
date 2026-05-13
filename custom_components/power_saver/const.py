@@ -2,6 +2,24 @@
 
 DOMAIN = "power_saver"
 
+
+def validate_time_format(value: object) -> tuple[bool, str | None]:
+    """Validate a time value as HH:MM or HH:MM:SS."""
+    if not isinstance(value, str):
+        return False, "Time must be a string"
+    parts = value.split(":")
+    if len(parts) not in (2, 3):
+        return False, "Time must use HH:MM or HH:MM:SS"
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+        second = int(parts[2]) if len(parts) == 3 else 0
+    except ValueError:
+        return False, "Time must use numeric HH:MM or HH:MM:SS"
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or not 0 <= second <= 59:
+        return False, "Time is out of range"
+    return True, None
+
 # Config entry data keys (immutable after creation)
 CONF_NORDPOOL_SENSOR = "nordpool_sensor"
 CONF_NORDPOOL_TYPE = "nordpool_type"
@@ -55,10 +73,14 @@ DEFAULT_ROLLING_WINDOW = 28.0
 # Service names
 SERVICE_SET_SCHEDULE_HOURS = "set_schedule_hours"
 SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE = "clear_schedule_hours_override"
+SERVICE_SET_EXCLUDE_TIMES = "set_exclude_times"
+SERVICE_CLEAR_EXCLUDE_TIMES_OVERRIDE = "clear_exclude_times_override"
 
 # Service / attribute keys
 ATTR_HOURS = "hours"
 ATTR_DEVICE_ID = "device_id"
+ATTR_EXCLUDE_FROM = "exclude_from"
+ATTR_EXCLUDE_UNTIL = "exclude_until"
 
 # Update interval in minutes
 UPDATE_INTERVAL_MINUTES = 15

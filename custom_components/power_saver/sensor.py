@@ -101,6 +101,9 @@ class PowerSaverSensor(CoordinatorEntity[PowerSaverCoordinator], SensorEntity):
         }
         if self.coordinator.hours_override is not None:
             attrs["schedule_hours_override"] = self.coordinator.hours_override
+        exclude_times_override = self.coordinator.exclude_times_override
+        if isinstance(exclude_times_override, dict):
+            attrs["exclude_times_override"] = exclude_times_override
         return attrs
 
 
