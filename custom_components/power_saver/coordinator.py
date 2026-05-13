@@ -52,6 +52,7 @@ from .const import (
     STRATEGY_LOWEST_PRICE,
     STRATEGY_MINIMUM_RUNTIME,
     UPDATE_INTERVAL_MINUTES,
+    validate_time_format,
 )
 from . import scheduler
 from .nordpool_adapter import async_get_prices
@@ -81,18 +82,8 @@ class PowerSaverData:
 
 def _is_valid_time(value: object) -> bool:
     """Return whether value is a supported HH:MM or HH:MM:SS time string."""
-    if not isinstance(value, str):
-        return False
-    parts = value.split(":")
-    if len(parts) not in (2, 3):
-        return False
-    try:
-        hour = int(parts[0])
-        minute = int(parts[1])
-        second = int(parts[2]) if len(parts) == 3 else 0
-    except ValueError:
-        return False
-    return 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59
+    is_valid, _error = validate_time_format(value)
+    return is_valid
 
 
 class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):

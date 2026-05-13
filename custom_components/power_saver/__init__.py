@@ -28,6 +28,7 @@ from .const import (
     SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE,
     SERVICE_SET_EXCLUDE_TIMES,
     SERVICE_SET_SCHEDULE_HOURS,
+    validate_time_format,
 )
 from .coordinator import PowerSaverCoordinator
 
@@ -38,19 +39,9 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 def _validate_time(value: str) -> str:
     """Validate a service time value as HH:MM or HH:MM:SS."""
-    if not isinstance(value, str):
-        raise vol.Invalid("Time must be a string")
-    parts = value.split(":")
-    if len(parts) not in (2, 3):
-        raise vol.Invalid("Time must use HH:MM or HH:MM:SS")
-    try:
-        hour = int(parts[0])
-        minute = int(parts[1])
-        second = int(parts[2]) if len(parts) == 3 else 0
-    except ValueError as err:
-        raise vol.Invalid("Time must use numeric HH:MM or HH:MM:SS") from err
-    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or not 0 <= second <= 59:
-        raise vol.Invalid("Time is out of range")
+    is_valid, error = validate_time_format(value)
+    if not is_valid:
+        raise vol.Invalid(error)
     return value
 
 SERVICE_SET_HOURS_SCHEMA = vol.Schema(
