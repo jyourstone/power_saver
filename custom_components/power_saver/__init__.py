@@ -20,9 +20,13 @@ except ImportError:
 
 from .const import (
     ATTR_DEVICE_ID,
+    ATTR_EXCLUDE_FROM,
+    ATTR_EXCLUDE_UNTIL,
     ATTR_HOURS,
     DOMAIN,
+    SERVICE_CLEAR_EXCLUDE_TIMES_OVERRIDE,
     SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE,
+    SERVICE_SET_EXCLUDE_TIMES,
     SERVICE_SET_SCHEDULE_HOURS,
 )
 from .coordinator import PowerSaverCoordinator
@@ -30,6 +34,24 @@ from .coordinator import PowerSaverCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
+
+
+def _validate_time(value: str) -> str:
+    """Validate a service time value as HH:MM or HH:MM:SS."""
+    if not isinstance(value, str):
+        raise vol.Invalid("Time must be a string")
+    parts = value.split(":")
+    if len(parts) not in (2, 3):
+        raise vol.Invalid("Time must use HH:MM or HH:MM:SS")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+        second = int(parts[2]) if len(parts) == 3 else 0
+    except ValueError as err:
+        raise vol.Invalid("Time must use numeric HH:MM or HH:MM:SS") from err
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or not 0 <= second <= 59:
+        raise vol.Invalid("Time is out of range")
+    return value
 
 SERVICE_SET_HOURS_SCHEMA = vol.Schema(
     {
@@ -43,6 +65,14 @@ SERVICE_SET_HOURS_SCHEMA = vol.Schema(
 SERVICE_CLEAR_OVERRIDE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): str,
+    }
+)
+
+SERVICE_SET_EXCLUDE_TIMES_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): str,
+        vol.Required(ATTR_EXCLUDE_FROM): _validate_time,
+        vol.Required(ATTR_EXCLUDE_UNTIL): _validate_time,
     }
 )
 
@@ -85,41 +115,80 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    async def handle_set_schedule_hours(call: ServiceCall) -> None:
+        """Handle the set_schedule_hours service call."""
+        device_id = call.data[ATTR_DEVICE_ID]
+        hours = call.data[ATTR_HOURS]
+        try:
+            coord = _find_coordinator(hass, device_id)
+        except ValueError as err:
+            raise HomeAssistantError(
+                f"Device {device_id} not found or not a Power Saver device"
+            ) from err
+        await coord.async_set_hours_override(hours)
+
+    async def handle_clear_hours_override(call: ServiceCall) -> None:
+        """Handle the clear_schedule_hours_override service call."""
+        device_id = call.data[ATTR_DEVICE_ID]
+        try:
+            coord = _find_coordinator(hass, device_id)
+        except ValueError as err:
+            raise HomeAssistantError(
+                f"Device {device_id} not found or not a Power Saver device"
+            ) from err
+        await coord.async_clear_hours_override()
+
+    async def handle_set_exclude_times(call: ServiceCall) -> None:
+        """Handle the set_exclude_times service call."""
+        device_id = call.data[ATTR_DEVICE_ID]
+        exclude_from = call.data[ATTR_EXCLUDE_FROM]
+        exclude_until = call.data[ATTR_EXCLUDE_UNTIL]
+        try:
+            coord = _find_coordinator(hass, device_id)
+        except ValueError as err:
+            raise HomeAssistantError(
+                f"Device {device_id} not found or not a Power Saver device"
+            ) from err
+        await coord.async_set_exclude_times_override(exclude_from, exclude_until)
+
+    async def handle_clear_exclude_times_override(call: ServiceCall) -> None:
+        """Handle the clear_exclude_times_override service call."""
+        device_id = call.data[ATTR_DEVICE_ID]
+        try:
+            coord = _find_coordinator(hass, device_id)
+        except ValueError as err:
+            raise HomeAssistantError(
+                f"Device {device_id} not found or not a Power Saver device"
+            ) from err
+        await coord.async_clear_exclude_times_override()
+
     # Register services once (on first entry setup).
     if not hass.services.has_service(DOMAIN, SERVICE_SET_SCHEDULE_HOURS):
-        async def handle_set_schedule_hours(call: ServiceCall) -> None:
-            """Handle the set_schedule_hours service call."""
-            device_id = call.data[ATTR_DEVICE_ID]
-            hours = call.data[ATTR_HOURS]
-            try:
-                coord = _find_coordinator(hass, device_id)
-            except ValueError as err:
-                raise HomeAssistantError(
-                    f"Device {device_id} not found or not a Power Saver device"
-                ) from err
-            await coord.async_set_hours_override(hours)
-
-        async def handle_clear_override(call: ServiceCall) -> None:
-            """Handle the clear_schedule_hours_override service call."""
-            device_id = call.data[ATTR_DEVICE_ID]
-            try:
-                coord = _find_coordinator(hass, device_id)
-            except ValueError as err:
-                raise HomeAssistantError(
-                    f"Device {device_id} not found or not a Power Saver device"
-                ) from err
-            await coord.async_clear_hours_override()
-
         hass.services.async_register(
             DOMAIN,
             SERVICE_SET_SCHEDULE_HOURS,
             handle_set_schedule_hours,
             schema=SERVICE_SET_HOURS_SCHEMA,
         )
+    if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE):
         hass.services.async_register(
             DOMAIN,
             SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE,
-            handle_clear_override,
+            handle_clear_hours_override,
+            schema=SERVICE_CLEAR_OVERRIDE_SCHEMA,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_EXCLUDE_TIMES):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_EXCLUDE_TIMES,
+            handle_set_exclude_times,
+            schema=SERVICE_SET_EXCLUDE_TIMES_SCHEMA,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_EXCLUDE_TIMES_OVERRIDE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_CLEAR_EXCLUDE_TIMES_OVERRIDE,
+            handle_clear_exclude_times_override,
             schema=SERVICE_CLEAR_OVERRIDE_SCHEMA,
         )
 
@@ -144,5 +213,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok and not hass.data.get(DOMAIN):
         hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE_HOURS)
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_SCHEDULE_HOURS_OVERRIDE)
+        hass.services.async_remove(DOMAIN, SERVICE_SET_EXCLUDE_TIMES)
+        hass.services.async_remove(DOMAIN, SERVICE_CLEAR_EXCLUDE_TIMES_OVERRIDE)
 
     return unload_ok

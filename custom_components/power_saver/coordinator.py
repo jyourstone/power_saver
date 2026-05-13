@@ -79,6 +79,22 @@ class PowerSaverData:
     emergency_mode: bool = False
 
 
+def _is_valid_time(value: object) -> bool:
+    """Return whether value is a supported HH:MM or HH:MM:SS time string."""
+    if not isinstance(value, str):
+        return False
+    parts = value.split(":")
+    if len(parts) not in (2, 3):
+        return False
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+        second = int(parts[2]) if len(parts) == 3 else 0
+    except ValueError:
+        return False
+    return 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59
+
+
 class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
     """Coordinator that manages Power Saver schedule updates."""
 
@@ -107,6 +123,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._schedule_has_tomorrow: bool = False
         self._options_fingerprint: str | None = None
         self._hours_override: float | None = None
+        self._exclude_from_override: str | None = None
+        self._exclude_until_override: str | None = None
 
     @property
     def last_on_time(self) -> datetime | None:
@@ -128,6 +146,18 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         """Return the current hours override, or None if not set."""
         return self._hours_override
 
+    @property
+    def exclude_times_override(self) -> dict[str, str] | None:
+        """Return the current exclude times override, or None if not set."""
+        exclude_from = getattr(self, "_exclude_from_override", None)
+        exclude_until = getattr(self, "_exclude_until_override", None)
+        if exclude_from is None or exclude_until is None:
+            return None
+        return {
+            "exclude_from": exclude_from,
+            "exclude_until": exclude_until,
+        }
+
     async def async_set_hours_override(self, hours: float) -> None:
         """Set a runtime hours override, replacing the config entry value."""
         self._hours_override = hours
@@ -141,6 +171,30 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._hours_override = None
         self._locked_schedule = None  # Force schedule recomputation
         _LOGGER.info("Schedule hours override cleared")
+        await self._async_save_state()
+        await self.async_request_refresh()
+
+    async def async_set_exclude_times_override(
+        self, exclude_from: str, exclude_until: str
+    ) -> None:
+        """Set a runtime exclude times override, replacing config entry values."""
+        self._exclude_from_override = exclude_from
+        self._exclude_until_override = exclude_until
+        self._locked_schedule = None  # Force schedule recomputation
+        _LOGGER.info(
+            "Exclude times override set to %s - %s",
+            exclude_from,
+            exclude_until,
+        )
+        await self._async_save_state()
+        await self.async_request_refresh()
+
+    async def async_clear_exclude_times_override(self) -> None:
+        """Clear the runtime exclude times override, reverting to config values."""
+        self._exclude_from_override = None
+        self._exclude_until_override = None
+        self._locked_schedule = None  # Force schedule recomputation
+        _LOGGER.info("Exclude times override cleared")
         await self._async_save_state()
         await self.async_request_refresh()
 
@@ -248,6 +302,12 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         options = self.config_entry.options
         relevant = {k: options.get(k) for k in self._SCHEDULE_OPTIONS_KEYS}
         relevant["_hours_override"] = self._hours_override
+        relevant["_exclude_from_override"] = getattr(
+            self, "_exclude_from_override", None
+        )
+        relevant["_exclude_until_override"] = getattr(
+            self, "_exclude_until_override", None
+        )
         raw = json.dumps(relevant, sort_keys=True)
         return hashlib.md5(raw.encode()).hexdigest()
 
@@ -336,6 +396,11 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             self.hass, self._nordpool_entity, self._nordpool_type
         )
 
+        # Load persisted state on first run
+        if not self._state_loaded:
+            await self._async_load_state()
+            self._state_loaded = True
+
         # Read options
         options = self.config_entry.options
         strategy = options.get(CONF_STRATEGY, DEFAULT_STRATEGY)
@@ -352,6 +417,9 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         selection_mode = options.get(CONF_SELECTION_MODE, DEFAULT_SELECTION_MODE)
         exclude_from = options.get(CONF_EXCLUDE_FROM)
         exclude_until = options.get(CONF_EXCLUDE_UNTIL)
+        if self.exclude_times_override is not None:
+            exclude_from = self._exclude_from_override
+            exclude_until = self._exclude_until_override
         # Strategy-specific options
         period_from = options.get(CONF_PERIOD_FROM, DEFAULT_PERIOD_FROM)
         period_to = options.get(CONF_PERIOD_TO, DEFAULT_PERIOD_TO)
@@ -363,11 +431,6 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 rolling_window, min_hours,
             )
             max_hours_off = 0
-
-        # Load persisted state on first run
-        if not self._state_loaded:
-            await self._async_load_state()
-            self._state_loaded = True
 
         # Emergency mode: no price data at all
         if not raw_today and not raw_tomorrow:
@@ -560,6 +623,30 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                         "Ignoring invalid hours_override from storage: %r",
                         hours_override,
                     )
+            exclude_from_override = data.get("exclude_from_override")
+            exclude_until_override = data.get("exclude_until_override")
+            if (
+                exclude_from_override is not None
+                or exclude_until_override is not None
+            ):
+                if (
+                    _is_valid_time(exclude_from_override)
+                    and _is_valid_time(exclude_until_override)
+                ):
+                    self._exclude_from_override = exclude_from_override
+                    self._exclude_until_override = exclude_until_override
+                    _LOGGER.info(
+                        "Restored exclude times override: %s - %s",
+                        exclude_from_override,
+                        exclude_until_override,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Ignoring invalid exclude times override from storage: "
+                        "%r - %r",
+                        exclude_from_override,
+                        exclude_until_override,
+                    )
         except Exception:
             _LOGGER.exception("Failed to load state from storage")
 
@@ -574,6 +661,12 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                         else None
                     ),
                     "hours_override": self._hours_override,
+                    "exclude_from_override": getattr(
+                        self, "_exclude_from_override", None
+                    ),
+                    "exclude_until_override": getattr(
+                        self, "_exclude_until_override", None
+                    ),
                 }
             )
         except Exception:
