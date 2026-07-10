@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,6 +19,36 @@ sys.path.insert(0, str(_scheduler_path))
 import scheduler  # noqa: E402
 
 build_schedule = scheduler.build_schedule
+NORDPOOL_TYPE_HACS = "hacs"
+NORDPOOL_TYPE_NATIVE = "native"
+EXPECTED_CLOCK_REFRESH_DELAY_SECONDS = 10
+EXPECTED_CLOCK_REFRESH_MINUTES = (0, 15, 30, 45)
+
+
+def _make_coordinator_for_refresh_tracking(nordpool_type=NORDPOOL_TYPE_HACS):
+    """Create a coordinator with enough state for refresh tracking tests."""
+    from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+    hass = MagicMock()
+    hass.async_create_task = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "test_123"
+    entry.data = {
+        "nordpool_sensor": "sensor.nordpool",
+        "nordpool_type": nordpool_type,
+    }
+    entry.options = {}
+
+    with (
+        patch("custom_components.power_saver.coordinator.DataUpdateCoordinator.__init__"),
+        patch("custom_components.power_saver.coordinator.Store"),
+    ):
+        coordinator = PowerSaverCoordinator(hass, entry)
+
+    coordinator.hass = hass
+    coordinator.config_entry = entry
+    coordinator.async_request_refresh = MagicMock()
+    return coordinator
 
 
 @pytest.fixture
@@ -49,6 +79,217 @@ def tomorrow_prices() -> list[dict]:
         0.50, 0.55, 0.45, 0.30, 0.18, 0.10,  # 18-23
     ]
     return [slot for h, p in enumerate(prices) for slot in make_nordpool_hour(h, p, day_offset=1)]
+
+
+class TestRefreshTracking:
+    """Tests for event-driven and clock-aligned coordinator refresh tracking."""
+
+    def test_data_update_coordinator_polling_is_disabled(self):
+        """Coordinator should not use drift-prone fixed interval polling."""
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.entry_id = "test_123"
+        entry.data = {
+            "nordpool_sensor": "sensor.nordpool",
+            "nordpool_type": NORDPOOL_TYPE_HACS,
+        }
+
+        with (
+            patch(
+                "custom_components.power_saver.coordinator.DataUpdateCoordinator.__init__"
+            ) as mock_init,
+            patch("custom_components.power_saver.coordinator.Store"),
+        ):
+            PowerSaverCoordinator(hass, entry)
+
+        assert mock_init.call_args.kwargs["update_interval"] is None
+
+    def test_setup_refresh_tracking_registers_hacs_listeners_once(self):
+        """HACS setups should register Nord Pool and fallback listeners once."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        unsub_nordpool = MagicMock()
+        unsub_clock = MagicMock()
+
+        with (
+            patch(
+                "custom_components.power_saver.coordinator.async_track_state_change_event",
+                return_value=unsub_nordpool,
+            ) as mock_track_state,
+            patch(
+                "custom_components.power_saver.coordinator.async_track_time_change",
+                return_value=unsub_clock,
+            ) as mock_track_time,
+            patch.object(coordinator, "_subscribe_native_coordinator") as mock_native,
+        ):
+            coordinator.async_setup_refresh_tracking()
+            coordinator.async_setup_refresh_tracking()
+
+        mock_track_state.assert_called_once_with(
+            coordinator.hass,
+            ["sensor.nordpool"],
+            coordinator._on_nordpool_update,
+        )
+        mock_track_time.assert_called_once_with(
+            coordinator.hass,
+            coordinator._schedule_clock_refresh,
+            minute=EXPECTED_CLOCK_REFRESH_MINUTES,
+            second=0,
+        )
+        mock_native.assert_not_called()
+        assert coordinator._unsub_nordpool is unsub_nordpool
+        assert coordinator._unsub_clock_refresh is unsub_clock
+
+    def test_setup_refresh_tracking_subscribes_native_coordinator(self):
+        """Native setups should also subscribe to the native Nord Pool coordinator."""
+        coordinator = _make_coordinator_for_refresh_tracking(NORDPOOL_TYPE_NATIVE)
+
+        with (
+            patch(
+                "custom_components.power_saver.coordinator.async_track_state_change_event",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "custom_components.power_saver.coordinator.async_track_time_change",
+                return_value=MagicMock(),
+            ),
+            patch.object(coordinator, "_subscribe_native_coordinator") as mock_native,
+        ):
+            coordinator.async_setup_refresh_tracking()
+
+        mock_native.assert_called_once()
+
+    def test_clock_boundary_schedules_delayed_refresh(self):
+        """Quarter-hour fallback should wait briefly before refreshing."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        unsub_delay = MagicMock()
+
+        with patch(
+            "custom_components.power_saver.coordinator.async_call_later",
+            return_value=unsub_delay,
+        ) as mock_call_later:
+            coordinator._schedule_clock_refresh(datetime(2026, 2, 6, 14, 0))
+
+        mock_call_later.assert_called_once_with(
+            coordinator.hass,
+            EXPECTED_CLOCK_REFRESH_DELAY_SECONDS,
+            coordinator._on_clock_refresh_delay_elapsed,
+        )
+        assert coordinator._unsub_delayed_clock_refresh is unsub_delay
+
+    def test_clock_boundary_replaces_pending_delayed_refresh(self):
+        """A new boundary callback should cancel any pending delayed refresh."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        pending_unsub = MagicMock()
+        new_unsub = MagicMock()
+        coordinator._unsub_delayed_clock_refresh = pending_unsub
+
+        with patch(
+            "custom_components.power_saver.coordinator.async_call_later",
+            return_value=new_unsub,
+        ):
+            coordinator._schedule_clock_refresh(datetime(2026, 2, 6, 14, 0))
+
+        pending_unsub.assert_called_once()
+        assert coordinator._unsub_delayed_clock_refresh is new_unsub
+
+    def test_clock_boundary_skips_fallback_after_recent_nordpool_update(self):
+        """Fallback should not be scheduled when Nord Pool already refreshed."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        now = datetime(2026, 2, 6, 13, 0, 5, tzinfo=timezone.utc)
+        coordinator._last_nordpool_refresh_request = now - timedelta(seconds=3)
+
+        with (
+            patch(
+                "custom_components.power_saver.coordinator.dt_util.utcnow",
+                return_value=now,
+            ),
+            patch(
+                "custom_components.power_saver.coordinator.async_call_later",
+            ) as mock_call_later,
+        ):
+            coordinator._schedule_clock_refresh(datetime(2026, 2, 6, 14, 0))
+
+        mock_call_later.assert_not_called()
+        assert coordinator._unsub_delayed_clock_refresh is None
+
+    def test_nordpool_update_cancels_pending_fallback(self):
+        """Nord Pool updates should cancel the delayed fallback refresh."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        pending_unsub = MagicMock()
+        coordinator._unsub_delayed_clock_refresh = pending_unsub
+        now = datetime(2026, 2, 6, 13, 0, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "custom_components.power_saver.coordinator.dt_util.utcnow",
+            return_value=now,
+        ):
+            coordinator._on_nordpool_update(MagicMock())
+
+        pending_unsub.assert_called_once()
+        assert coordinator._unsub_delayed_clock_refresh is None
+        assert coordinator._last_nordpool_refresh_request == now
+        coordinator.async_request_refresh.assert_called_once()
+        coordinator.hass.async_create_task.assert_called_once()
+
+    def test_native_update_cancels_pending_fallback(self):
+        """Native coordinator updates should cancel the delayed fallback refresh."""
+        coordinator = _make_coordinator_for_refresh_tracking(NORDPOOL_TYPE_NATIVE)
+        pending_unsub = MagicMock()
+        coordinator._unsub_delayed_clock_refresh = pending_unsub
+        now = datetime(2026, 2, 6, 13, 0, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "custom_components.power_saver.coordinator.dt_util.utcnow",
+            return_value=now,
+        ):
+            coordinator._on_native_coordinator_update()
+
+        pending_unsub.assert_called_once()
+        assert coordinator._unsub_delayed_clock_refresh is None
+        assert coordinator._last_nordpool_refresh_request == now
+        coordinator.async_request_refresh.assert_called_once()
+        coordinator.hass.async_create_task.assert_called_once()
+
+    def test_delayed_clock_refresh_requests_refresh(self):
+        """Delayed fallback callback should request a coordinator refresh."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        coordinator._unsub_delayed_clock_refresh = MagicMock()
+
+        coordinator._on_clock_refresh_delay_elapsed(datetime(2026, 2, 6, 14, 0))
+
+        assert coordinator._unsub_delayed_clock_refresh is None
+        coordinator.async_request_refresh.assert_called_once()
+        coordinator.hass.async_create_task.assert_called_once()
+
+    async def test_shutdown_cancels_refresh_tracking_callbacks(self):
+        """Shutdown should clean up all refresh listeners and pending callbacks."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_on_time = None
+        coordinator._hours_override = None
+        coordinator._exclude_from_override = None
+        coordinator._exclude_until_override = None
+        coordinator._refresh_tracking_setup = True
+        coordinator._unsub_nordpool = MagicMock()
+        coordinator._unsub_native_coordinator = MagicMock()
+        coordinator._unsub_clock_refresh = MagicMock()
+        coordinator._unsub_delayed_clock_refresh = MagicMock()
+
+        with patch(
+            "custom_components.power_saver.coordinator.DataUpdateCoordinator.async_shutdown",
+            new=AsyncMock(),
+        ) as mock_super_shutdown:
+            await coordinator.async_shutdown()
+
+        assert coordinator._refresh_tracking_setup is False
+        assert coordinator._unsub_nordpool is None
+        assert coordinator._unsub_native_coordinator is None
+        assert coordinator._unsub_clock_refresh is None
+        assert coordinator._unsub_delayed_clock_refresh is None
+        mock_super_shutdown.assert_awaited_once()
 
 
 class TestLockedSchedule:
@@ -447,5 +688,3 @@ class TestShouldRecomputeSchedule:
         mock_coordinator._schedule_has_tomorrow = False
 
         assert mock_coordinator._should_recompute_schedule([], now) is True
-
-
