@@ -65,6 +65,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 2
 CLOCK_REFRESH_DELAY_SECONDS = 10
+CLOCK_REFRESH_SUPPRESS_SECONDS = CLOCK_REFRESH_DELAY_SECONDS * 2
 CLOCK_REFRESH_MINUTES = tuple(range(0, 60, UPDATE_INTERVAL_MINUTES))
 
 
@@ -287,7 +288,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             return False
 
         elapsed = dt_util.utcnow() - self._last_nordpool_refresh_request
-        return elapsed <= timedelta(seconds=CLOCK_REFRESH_DELAY_SECONDS)
+        return elapsed <= timedelta(seconds=CLOCK_REFRESH_SUPPRESS_SECONDS)
 
     @callback
     def _request_refresh_from_nordpool(self, source: str) -> None:

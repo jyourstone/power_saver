@@ -22,6 +22,7 @@ build_schedule = scheduler.build_schedule
 NORDPOOL_TYPE_HACS = "hacs"
 NORDPOOL_TYPE_NATIVE = "native"
 EXPECTED_CLOCK_REFRESH_DELAY_SECONDS = 10
+EXPECTED_CLOCK_REFRESH_SUPPRESS_SECONDS = 20
 EXPECTED_CLOCK_REFRESH_MINUTES = (0, 15, 30, 45)
 
 
@@ -198,7 +199,7 @@ class TestRefreshTracking:
         """Fallback should not be scheduled when Nord Pool already refreshed."""
         coordinator = _make_coordinator_for_refresh_tracking()
         now = datetime(2026, 2, 6, 13, 0, 5, tzinfo=timezone.utc)
-        coordinator._last_nordpool_refresh_request = now - timedelta(seconds=3)
+        coordinator._last_nordpool_refresh_request = now - timedelta(seconds=14)
 
         with (
             patch(
@@ -213,6 +214,30 @@ class TestRefreshTracking:
 
         mock_call_later.assert_not_called()
         assert coordinator._unsub_delayed_clock_refresh is None
+
+    def test_clock_boundary_schedules_fallback_after_suppression_window(self):
+        """Fallback should run when the Nord Pool request is no longer recent."""
+        coordinator = _make_coordinator_for_refresh_tracking()
+        now = datetime(2026, 2, 6, 13, 0, 0, tzinfo=timezone.utc)
+        coordinator._last_nordpool_refresh_request = now - timedelta(
+            seconds=EXPECTED_CLOCK_REFRESH_SUPPRESS_SECONDS + 1
+        )
+        unsub_delay = MagicMock()
+
+        with (
+            patch(
+                "custom_components.power_saver.coordinator.dt_util.utcnow",
+                return_value=now,
+            ),
+            patch(
+                "custom_components.power_saver.coordinator.async_call_later",
+                return_value=unsub_delay,
+            ) as mock_call_later,
+        ):
+            coordinator._schedule_clock_refresh(datetime(2026, 2, 6, 14, 0))
+
+        mock_call_later.assert_called_once()
+        assert coordinator._unsub_delayed_clock_refresh is unsub_delay
 
     def test_nordpool_update_cancels_pending_fallback(self):
         """Nord Pool updates should cancel the delayed fallback refresh."""

@@ -94,6 +94,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = PowerSaverCoordinator(hass, entry)
 
     await coordinator.async_config_entry_first_refresh()
+    # HA versions that call the coordinator setup hook will have already
+    # registered this; keep the explicit call as a compatibility fallback.
     coordinator.async_setup_refresh_tracking()
 
     hass.data.setdefault(DOMAIN, {})
