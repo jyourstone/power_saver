@@ -9,9 +9,13 @@ import json
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_change,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -60,6 +64,9 @@ from .nordpool_adapter import async_get_prices
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 2
+CLOCK_REFRESH_DELAY_SECONDS = 10
+CLOCK_REFRESH_SUPPRESS_SECONDS = CLOCK_REFRESH_DELAY_SECONDS * 2
+CLOCK_REFRESH_MINUTES = tuple(range(0, 60, UPDATE_INTERVAL_MINUTES))
 
 
 @dataclass
@@ -98,15 +105,19 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
             config_entry=entry,
-            update_interval=timedelta(minutes=UPDATE_INTERVAL_MINUTES),
+            update_interval=None,
         )
         self._nordpool_entity = entry.data[CONF_NORDPOOL_SENSOR]
         self._nordpool_type = entry.data.get(CONF_NORDPOOL_TYPE, NORDPOOL_TYPE_HACS)
         self._store = Store(hass, STORAGE_VERSION, f"power_saver.{entry.entry_id}")
         self._last_on_time: datetime | None = None
         self._state_loaded = False
-        self._unsub_nordpool: callback | None = None
-        self._unsub_native_coordinator: callback | None = None
+        self._refresh_tracking_setup = False
+        self._unsub_nordpool: CALLBACK_TYPE | None = None
+        self._unsub_native_coordinator: CALLBACK_TYPE | None = None
+        self._unsub_clock_refresh: CALLBACK_TYPE | None = None
+        self._unsub_delayed_clock_refresh: CALLBACK_TYPE | None = None
+        self._last_nordpool_refresh_request: datetime | None = None
         self._previous_state: str | None = None
         self._force_on: bool = False
         self._force_off: bool = False
@@ -211,6 +222,16 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def _async_setup(self) -> None:
         """Set up the coordinator (called once on first refresh)."""
+        self.async_setup_refresh_tracking()
+
+    @callback
+    def async_setup_refresh_tracking(self) -> None:
+        """Set up event-driven and clock-aligned refresh tracking."""
+        if self._refresh_tracking_setup:
+            return
+
+        self._refresh_tracking_setup = True
+
         # Register Nord Pool state change listener for immediate recalculation
         self._unsub_nordpool = async_track_state_change_event(
             self.hass, [self._nordpool_entity], self._on_nordpool_update
@@ -225,11 +246,67 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         if self._nordpool_type == NORDPOOL_TYPE_NATIVE:
             self._subscribe_native_coordinator()
 
+        # Fallback refresh shortly after each Nord Pool quarter-hour boundary.
+        # The delay gives upstream sensors a small window to publish fresh state.
+        self._unsub_clock_refresh = async_track_time_change(
+            self.hass,
+            self._schedule_clock_refresh,
+            minute=CLOCK_REFRESH_MINUTES,
+            second=0,
+        )
+
+    @callback
+    def _schedule_clock_refresh(self, _now: datetime) -> None:
+        """Schedule a delayed refresh after a quarter-hour boundary."""
+        if self._unsub_delayed_clock_refresh:
+            self._unsub_delayed_clock_refresh()
+            self._unsub_delayed_clock_refresh = None
+
+        if self._recent_nordpool_refresh_request():
+            _LOGGER.debug(
+                "Skipping clock-aligned fallback refresh because Nord Pool "
+                "already requested a refresh near the boundary"
+            )
+            return
+
+        self._unsub_delayed_clock_refresh = async_call_later(
+            self.hass,
+            CLOCK_REFRESH_DELAY_SECONDS,
+            self._on_clock_refresh_delay_elapsed,
+        )
+
+    @callback
+    def _on_clock_refresh_delay_elapsed(self, _now: datetime) -> None:
+        """Refresh after the quarter-hour boundary grace period."""
+        self._unsub_delayed_clock_refresh = None
+        _LOGGER.debug("Clock-aligned refresh boundary reached, requesting refresh")
+        self.hass.async_create_task(self.async_request_refresh())
+
+    def _recent_nordpool_refresh_request(self) -> bool:
+        """Return whether Nord Pool recently requested a refresh."""
+        if self._last_nordpool_refresh_request is None:
+            return False
+
+        elapsed = dt_util.utcnow() - self._last_nordpool_refresh_request
+        return elapsed <= timedelta(seconds=CLOCK_REFRESH_SUPPRESS_SECONDS)
+
+    @callback
+    def _request_refresh_from_nordpool(self, source: str) -> None:
+        """Request refresh from a Nord Pool event and suppress fallback polling."""
+        self._last_nordpool_refresh_request = dt_util.utcnow()
+
+        if self._unsub_delayed_clock_refresh:
+            self._unsub_delayed_clock_refresh()
+            self._unsub_delayed_clock_refresh = None
+            _LOGGER.debug("Cancelled pending clock-aligned fallback refresh")
+
+        _LOGGER.debug("%s updated, requesting refresh", source)
+        self.hass.async_create_task(self.async_request_refresh())
+
     @callback
     def _on_nordpool_update(self, event: Event) -> None:
         """Handle Nord Pool sensor state change."""
-        _LOGGER.debug("Nord Pool sensor updated, requesting refresh")
-        self.hass.async_create_task(self.async_request_refresh())
+        self._request_refresh_from_nordpool("Nord Pool sensor")
 
     def _subscribe_native_coordinator(self) -> None:
         """Subscribe to native Nord Pool coordinator updates.
@@ -268,8 +345,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
     @callback
     def _on_native_coordinator_update(self) -> None:
         """Handle native Nord Pool coordinator data update."""
-        _LOGGER.debug("Native Nord Pool coordinator updated, requesting refresh")
-        self.hass.async_create_task(self.async_request_refresh())
+        self._request_refresh_from_nordpool("Native Nord Pool coordinator")
 
     # Options that affect schedule computation (excludes CONF_CONTROLLED_ENTITIES)
     _SCHEDULE_OPTIONS_KEYS = (
@@ -666,10 +742,17 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
     async def async_shutdown(self) -> None:
         """Clean up listeners and persist state."""
         await self._async_save_state()
+        self._refresh_tracking_setup = False
         if self._unsub_nordpool:
             self._unsub_nordpool()
             self._unsub_nordpool = None
         if self._unsub_native_coordinator:
             self._unsub_native_coordinator()
             self._unsub_native_coordinator = None
+        if self._unsub_clock_refresh:
+            self._unsub_clock_refresh()
+            self._unsub_clock_refresh = None
+        if self._unsub_delayed_clock_refresh:
+            self._unsub_delayed_clock_refresh()
+            self._unsub_delayed_clock_refresh = None
         await super().async_shutdown()
