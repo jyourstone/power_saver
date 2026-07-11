@@ -37,7 +37,7 @@
 
 ## Requirements
 
-- Home Assistant 2024.4.0 or newer
+- Home Assistant 2024.11.0 or newer
 - Nord Pool integration, either the [native addon](https://www.home-assistant.io/integrations/nordpool/) or the [HACS custom addon](https://github.com/custom-components/nordpool), installed and configured
 
 ## Installation
