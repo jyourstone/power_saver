@@ -34,8 +34,8 @@ docker-compose -f dev/docker-compose.yaml up
 
 ```
 custom_components/power_saver/
-├── __init__.py           # Entry point, platform setup
-├── manifest.json         # HA integration metadata (version: 3.0.0)
+├── __init__.py           # Entry point, platform setup, service registration
+├── manifest.json         # HA integration metadata (version — kept current by release workflow)
 ├── const.py              # Constants and config keys
 ├── config_flow.py        # UI configuration + multi-step options flow
 ├── coordinator.py        # DataUpdateCoordinator, fetches prices, runs scheduler
@@ -43,6 +43,8 @@ custom_components/power_saver/
 ├── nordpool_adapter.py   # Abstracts HACS vs native Nord Pool
 ├── sensor.py             # Status + diagnostic sensors (7 sensors)
 ├── binary_sensor.py      # Emergency mode binary sensor
+├── switch.py             # Force On / Force Off override switches
+├── services.yaml         # Service (action) definitions
 ├── strings.json          # English source strings (blueprint only)
 └── translations/
     ├── en.json           # English runtime translations (REQUIRED)
@@ -52,9 +54,11 @@ custom_components/power_saver/
 ### Key Components
 
 - **scheduler.py** — Pure functions, no HA imports. Two strategies: `build_lowest_price_schedule()` (per-period optimization) and `build_minimum_runtime_schedule()` (rolling-window slot selection). `build_schedule()` is a thin dispatcher. Testable in isolation.
-- **coordinator.py** — `PowerSaverCoordinator` extends `DataUpdateCoordinator`. Fetches Nord Pool data every 15 min, computes the schedule once and locks it (recomputes only when new prices arrive, settings change, or schedule expires). Controls target entities on state changes. Persists `locked_schedule` and `last_on_time`.
+- **coordinator.py** — `PowerSaverCoordinator` extends `DataUpdateCoordinator` with `update_interval=None`: refreshes are event-driven (listens for Nord Pool sensor/coordinator updates) with a clock-aligned fallback shortly after each quarter-hour boundary. Computes the schedule once and locks it (recomputes only when new prices arrive, settings change, an override changes, or schedule expires). Controls target entities on state changes. Persists `locked_schedule`, `last_on_time`, and service overrides via `Store` (STORAGE_VERSION = 2).
 - **nordpool_adapter.py** — Auto-detects HACS (`raw_today` attribute) vs native HA Nord Pool. Normalizes both to `[{start, end, value}]` format.
 - **config_flow.py** — Strategy-aware setup: step 1 (sensor + name + strategy) → step 2 (strategy-specific required settings). Options flow: step 1 (strategy + sensor) → step 2 (strategy settings) → step 3 (advanced: mode, thresholds, exclusion, entities). ConfigEntry VERSION = 3.
+- **switch.py** — `ForceOnSwitch` / `ForceOffSwitch` override switches (mutually exclusive) that bypass the schedule.
+- **Services (actions)** — Defined in `services.yaml`, registered in `__init__.py`, targeted by `device_id`: `set_schedule_hours` / `clear_schedule_hours_override` (override hours per period / min hours on) and `set_exclude_times` / `clear_exclude_times_override` (override excluded time range). Overrides persist across restarts and force immediate schedule recomputation.
 
 ### Scheduling Strategies
 
@@ -64,7 +68,7 @@ custom_components/power_saver/
 
 ### Data Flow
 
-1. Coordinator fetches prices from Nord Pool (via adapter)
+1. Coordinator refreshes on Nord Pool updates (event-driven + quarter-hour fallback) and fetches prices via the adapter
 2. On first run, new prices, or schedule expiry: `scheduler.build_schedule()` computes and locks the schedule
 3. On subsequent refreshes: locked schedule is reused without recomputation
 4. `scheduler.find_current_slot()` determines current state from the locked schedule
@@ -86,11 +90,11 @@ custom_components/power_saver/
 
 - **pytest** with `asyncio_mode = auto` (see [pytest.ini](pytest.ini))
 - **pytest-homeassistant-custom-component** provides HA test fixtures
-- [test_scheduler.py](tests/test_scheduler.py) — ~200 tests for pure scheduling logic (most comprehensive)
+- [test_scheduler.py](tests/test_scheduler.py) — pure scheduling logic (most comprehensive)
 - [test_config_flow.py](tests/test_config_flow.py) — config/options flow tests (2-step setup, 3-step options)
 - [test_nordpool_adapter.py](tests/test_nordpool_adapter.py) — adapter tests
-- [test_coordinator.py](tests/test_coordinator.py) and [test_sensor.py](tests/test_sensor.py) — stubs/partial
-- Fixtures in [conftest.py](tests/conftest.py): `today_prices()`, `tomorrow_prices()`, `make_nordpool_slot()`
+- [test_coordinator.py](tests/test_coordinator.py), [test_sensor.py](tests/test_sensor.py), [test_binary_sensor.py](tests/test_binary_sensor.py), [test_switch.py](tests/test_switch.py), [test_services.py](tests/test_services.py) — entity/coordinator/service tests
+- Fixtures in [conftest.py](tests/conftest.py): `today_prices()`, `tomorrow_prices()`, `make_nordpool_slot()`; shared helpers in [helpers.py](tests/helpers.py) (imported as `from helpers import ...` — `pytest.ini` sets `pythonpath = tests`)
 
 ## Translations Gotcha
 
