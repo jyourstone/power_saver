@@ -103,12 +103,14 @@ custom_components/power_saver/
 ## CI/CD
 
 - **[validate.yaml](.github/workflows/validate.yaml)** — HACS + Hassfest validation on push to main, PRs, and daily
-- **[release.yaml](.github/workflows/release.yaml)** — Triggered by semver tags (e.g., `3.0.0`). Auto-updates manifest version, creates GitHub release with zip, pushes version bump to main
+- **[release.yaml](.github/workflows/release.yaml)** — Triggered by `v`-prefixed semver tags (e.g., `v3.3.0`, `v3.3.0-rc.1`). Uses the annotated tag body as release notes, auto-updates manifest version (`v` stripped), creates GitHub release with zip, pushes version bump to main
 
 ### Release Process
 
-1. Tag the commit: `git tag 3.0.0 && git push origin 3.0.0`
-2. GitHub Actions handles the rest (manifest update, zip, release notes)
+1. Run `/release patch|minor|major` (or `rc`) — the skill computes the version, writes the changelog into an annotated tag, and pushes it
+2. GitHub Actions handles the rest (manifest update, zip, release notes from the tag body)
+
+RC tags (`-rc.N`) are published as prereleases and skip the version bump to main.
 
 ## Config Keys (const.py)
 

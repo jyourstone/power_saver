@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "[0-9]+.[0-9]+.[0-9]+"
-      - "[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*-rc.[0-9]*"
 
 permissions:
   contents: write
@@ -14,7 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
+        # Full history: the "Push version update to main" step below needs a
+        # real origin/main to branch from and push to.
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Determine release type
         id: release_type
@@ -25,9 +29,19 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract changelog from tag message
+        run: |
+          # actions/checkout fetches with --no-tags and leaves a *lightweight*
+          # local tag, so %(contents) would dereference to the commit message.
+          # Force-fetch the real annotated tag object first.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          # The /release skill writes the curated changelog into the annotated
+          # tag body (subject is just "Release <version>", so it is dropped).
+          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > release_notes.md
+
       - name: Update manifest version
         run: |
-          version="${GITHUB_REF_NAME}"
+          version="${GITHUB_REF_NAME#v}"
           jq --arg v "$version" '.version = $v' \
             custom_components/power_saver/manifest.json > tmp.json
           mv tmp.json custom_components/power_saver/manifest.json
@@ -38,8 +52,9 @@ jobs:
           zip -r ../../power_saver.zip .
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
+          body_path: release_notes.md
           generate_release_notes: true
           prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
           files: power_saver.zip
@@ -49,9 +64,8 @@ jobs:
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-          git fetch origin main
-          git checkout main
-          version="${GITHUB_REF_NAME}"
+          git checkout -B main origin/main
+          version="${GITHUB_REF_NAME#v}"
           jq --arg v "$version" '.version = $v' \
             custom_components/power_saver/manifest.json > tmp.json
           mv tmp.json custom_components/power_saver/manifest.json
