@@ -30,6 +30,7 @@
 - **Minimum consecutive hours** — Prevents short on/off cycles by requiring a minimum run duration
 - **Excluded hours** — Block a time range from ever being activated (e.g., avoid grid fee peak hours)
 - **Multiple instances** — Add one per appliance (water heater, floor heating, pool pump, etc.)
+- **Currency-aware** — Price threshold fields follow your Nord Pool sensor's currency (SEK, NOK, DKK, EUR, ...)
 - **Always on / Always off** — Force all controlled entities ON or OFF via switches, bypassing the schedule
 - **Dynamic hours override** — Adjust scheduled hours at runtime via service calls (ideal for automations based on temperature, weather, etc.)
 - **Emergency mode** — Keeps appliances running if price data is unavailable
