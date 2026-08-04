@@ -19,7 +19,7 @@ try:
 except ImportError:
     from homeassistant.config_entries import OptionsFlowWithConfigEntry as OptionsFlowWithReload
     _LEGACY_OPTIONS_FLOW = True
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
@@ -75,7 +75,7 @@ from .nordpool_adapter import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _price_unit(hass, entity_id):
+def _price_unit(hass: HomeAssistant, entity_id: str | None) -> str:
     """Price unit for form fields, from the chosen Nord Pool sensor's currency."""
     state = hass.states.get(entity_id) if entity_id else None
     if state is None:
