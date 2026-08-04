@@ -14,8 +14,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.power_saver.const import NORDPOOL_TYPE_HACS, NORDPOOL_TYPE_NATIVE
 from custom_components.power_saver.nordpool_adapter import (
+    DEFAULT_PRICE_UNIT,
     _convert_native_response,
     _get_native_coordinator_prices,
+    derive_price_unit,
     find_all_nordpool_sensors,
 )
 
@@ -671,3 +673,23 @@ class TestGetNativeCoordinatorPrices:
         today_prices, tomorrow_prices = result
         assert len(today_prices) == 1
         assert tomorrow_prices == []
+
+
+class TestDerivePriceUnit:
+    """derive_price_unit(): form-field currency follows the Nord Pool sensor."""
+
+    def test_unit_of_measurement_wins(self):
+        assert derive_price_unit({"unit_of_measurement": "EUR/kWh"}) == "EUR/kWh"
+        assert derive_price_unit({"unit_of_measurement": "NOK/kWh"}) == "NOK/kWh"
+
+    def test_non_kwh_unit_falls_back_to_currency(self):
+        attrs = {"unit_of_measurement": "öre", "currency": "DKK"}
+        assert derive_price_unit(attrs) == "DKK/kWh"
+
+    def test_currency_attribute_alone(self):
+        assert derive_price_unit({"currency": "EUR"}) == "EUR/kWh"
+
+    def test_defaults_to_sek(self):
+        assert derive_price_unit({}) == DEFAULT_PRICE_UNIT
+        assert derive_price_unit({"currency": ""}) == DEFAULT_PRICE_UNIT
+        assert derive_price_unit({"unit_of_measurement": None}) == DEFAULT_PRICE_UNIT

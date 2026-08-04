@@ -19,7 +19,7 @@ try:
 except ImportError:
     from homeassistant.config_entries import OptionsFlowWithConfigEntry as OptionsFlowWithReload
     _LEGACY_OPTIONS_FLOW = True
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
@@ -65,9 +65,22 @@ from .const import (
     STRATEGY_LOWEST_PRICE,
     STRATEGY_MINIMUM_RUNTIME,
 )
-from .nordpool_adapter import detect_nordpool_type, find_all_nordpool_sensors
+from .nordpool_adapter import (
+    DEFAULT_PRICE_UNIT,
+    derive_price_unit,
+    detect_nordpool_type,
+    find_all_nordpool_sensors,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _price_unit(hass: HomeAssistant, entity_id: str | None) -> str:
+    """Price unit for form fields, from the chosen Nord Pool sensor's currency."""
+    state = hass.states.get(entity_id) if entity_id else None
+    if state is None:
+        return DEFAULT_PRICE_UNIT
+    return derive_price_unit(state.attributes)
 
 
 def _optional_number(key: str, defaults: dict[str, Any]) -> vol.Optional:
@@ -331,6 +344,9 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                 options=options,
             )
 
+        price_unit = _price_unit(
+            self.hass, self._user_input.get(CONF_NORDPOOL_SENSOR)
+        )
         schema = vol.Schema(
             {
                 vol.Required(
@@ -354,13 +370,13 @@ class PowerSaverConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_ALWAYS_CHEAP): NumberSelector(
                     NumberSelectorConfig(
                         min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="SEK/kWh",
+                        unit_of_measurement=price_unit,
                     )
                 ),
                 vol.Optional(CONF_ALWAYS_EXPENSIVE): NumberSelector(
                     NumberSelectorConfig(
                         min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="SEK/kWh",
+                        unit_of_measurement=price_unit,
                     )
                 ),
                 vol.Optional(CONF_PRICE_SIMILARITY_PCT): NumberSelector(
@@ -570,6 +586,9 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
             self._options.update(user_input)
             return self.async_create_entry(data=self._options)
 
+        price_unit = _price_unit(
+            self.hass, self.config_entry.data.get(CONF_NORDPOOL_SENSOR)
+        )
         schema = vol.Schema(
             {
                 vol.Required(
@@ -594,13 +613,13 @@ class PowerSaverOptionsFlow(OptionsFlowWithReload):
                 _optional_number(CONF_ALWAYS_CHEAP, defaults): NumberSelector(
                     NumberSelectorConfig(
                         min=-10, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="SEK/kWh",
+                        unit_of_measurement=price_unit,
                     )
                 ),
                 _optional_number(CONF_ALWAYS_EXPENSIVE, defaults): NumberSelector(
                     NumberSelectorConfig(
                         min=0, max=100, step=0.01, mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="SEK/kWh",
+                        unit_of_measurement=price_unit,
                     )
                 ),
                 _optional_number(CONF_PRICE_SIMILARITY_PCT, defaults): NumberSelector(
