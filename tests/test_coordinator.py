@@ -713,3 +713,60 @@ class TestShouldRecomputeSchedule:
         mock_coordinator._schedule_has_tomorrow = False
 
         assert mock_coordinator._should_recompute_schedule([], now) is True
+
+
+class TestTransientPriceLoss:
+    """A failed price read must not discard a schedule that still applies.
+
+    Nord Pool refreshes on the hour and can briefly return nothing; that used
+    to trip emergency mode (a "problem" badge) every hour. See issue #45.
+    """
+
+    @pytest.fixture
+    def coord(self, now, today_prices):
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.entry_id = "test_transient"
+        entry.data = {
+            "nordpool_sensor": "sensor.nordpool",
+            "nordpool_type": "hacs",
+        }
+        entry.options = {"strategy": "lowest_price", "hours_per_period": 2.0}
+
+        with patch("custom_components.power_saver.coordinator.Store"):
+            coord = PowerSaverCoordinator(hass, entry)
+
+        coord._state_loaded = True
+        coord._locked_schedule = build_schedule(
+            raw_today=today_prices, raw_tomorrow=[], min_hours=2.0, now=now
+        )
+        coord._options_fingerprint = coord._compute_options_fingerprint()
+        coord._control_entities = AsyncMock()
+        return coord
+
+    async def _run(self, coord, now):
+        with patch(
+            "custom_components.power_saver.coordinator.async_get_prices",
+            AsyncMock(return_value=([], [])),
+        ), patch(
+            "custom_components.power_saver.coordinator.dt_util.now",
+            return_value=now,
+        ):
+            return await coord._async_update_data()
+
+    async def test_reuses_locked_schedule_instead_of_emergency(self, coord, now):
+        """Prices vanish while the locked schedule still covers now."""
+        data = await self._run(coord, now)
+
+        assert data.emergency_mode is False
+        assert data.schedule == coord._locked_schedule
+        assert data.min_price is None
+        assert data.max_price is None
+
+    async def test_emergency_when_schedule_no_longer_covers_now(self, coord, now):
+        """Past the schedule's horizon there is nothing left to fall back on."""
+        data = await self._run(coord, now + timedelta(days=3))
+
+        assert data.emergency_mode is True

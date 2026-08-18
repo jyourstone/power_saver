@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from datetime import date, datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.power_saver.const import NORDPOOL_TYPE_HACS, NORDPOOL_TYPE_NATIVE
 from custom_components.power_saver.nordpool_adapter import (
     DEFAULT_PRICE_UNIT,
+    _async_fetch_native_date,
     _convert_native_response,
     _get_native_coordinator_prices,
     derive_price_unit,
@@ -42,9 +45,16 @@ class MockDeliveryPeriodData:
 
 @dataclass
 class MockDeliveryPeriodsData:
-    """Mock for pynordpool DeliveryPeriodsData."""
+    """Mock for pynordpool DeliveryPeriodsData.
 
-    entries: list[MockDeliveryPeriodData] = field(default_factory=list)
+    pynordpool < 0.3 typed ``entries`` as ``list[DeliveryPeriodData]``;
+    0.4.0 (HA 2026.8) changed it to ``dict[date, DeliveryPeriodData]``.
+    Both shapes are exercised by the tests below.
+    """
+
+    entries: list[MockDeliveryPeriodData] | dict[date, MockDeliveryPeriodData] = field(
+        default_factory=list
+    )
 
 
 class TestConvertNativeResponse:
@@ -412,8 +422,13 @@ def _make_mock_config_entry(
     today_entries: list[MockDeliveryPeriodEntry],
     tomorrow_str: str | None = None,
     tomorrow_entries: list[MockDeliveryPeriodEntry] | None = None,
+    as_dict: bool = False,
 ):
-    """Create a mock config entry with native coordinator data."""
+    """Create a mock config entry with native coordinator data.
+
+    ``as_dict`` selects the pynordpool 0.4.0 shape, where ``entries`` is a
+    dict keyed by delivery date instead of a list.
+    """
     periods = [MockDeliveryPeriodData(requested_date=today_str, entries=today_entries)]
     if tomorrow_str is not None:
         periods.append(
@@ -424,7 +439,14 @@ def _make_mock_config_entry(
         )
 
     coordinator = MagicMock()
-    coordinator.data = MockDeliveryPeriodsData(entries=periods)
+    if as_dict:
+        coordinator.data = MockDeliveryPeriodsData(
+            entries={
+                date.fromisoformat(period.requested_date): period for period in periods
+            }
+        )
+    else:
+        coordinator.data = MockDeliveryPeriodsData(entries=periods)
 
     entry = MagicMock()
     entry.data = {"areas": areas}
@@ -673,6 +695,123 @@ class TestGetNativeCoordinatorPrices:
         today_prices, tomorrow_prices = result
         assert len(today_prices) == 1
         assert tomorrow_prices == []
+
+
+@patch(
+    "custom_components.power_saver.nordpool_adapter.dt_util.now",
+    return_value=MOCK_NOW,
+)
+class TestGetNativeCoordinatorPricesDictEntries:
+    """pynordpool 0.4.0 (HA 2026.8) keys ``entries`` by date instead of listing it.
+
+    Iterating that dict yields ``date`` keys, so reading ``requested_date`` off
+    each item silently produced nothing and every refresh fell back to live API
+    service calls. See issue #45.
+    """
+
+    def test_reads_today_and_tomorrow_from_dict(self, _mock_now):
+        """Dict-shaped entries must resolve today and tomorrow prices."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE4": 500.0},
+            ),
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 2, 0, tzinfo=CET),
+                entry={"SE4": 300.0},
+            ),
+        ]
+        tomorrow_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 13, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 13, 1, 0, tzinfo=CET),
+                entry={"SE4": 200.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+            tomorrow_str="2026-03-13",
+            tomorrow_entries=tomorrow_entries,
+            as_dict=True,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, tomorrow_prices = result
+        assert len(today_prices) == 2
+        assert today_prices[0]["value"] == pytest.approx(0.5)
+        assert today_prices[1]["value"] == pytest.approx(0.3)
+        assert len(tomorrow_prices) == 1
+        assert tomorrow_prices[0]["value"] == pytest.approx(0.2)
+
+    def test_today_only_from_dict(self, _mock_now):
+        """Missing tomorrow key yields an empty tomorrow list, not None."""
+        today_entries = [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, 12, 0, 0, tzinfo=CET),
+                end=datetime(2026, 3, 12, 1, 0, tzinfo=CET),
+                entry={"SE4": 400.0},
+            ),
+        ]
+
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-12",
+            today_entries=today_entries,
+            as_dict=True,
+        )
+
+        result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, tomorrow_prices = result
+        assert len(today_prices) == 1
+        assert tomorrow_prices == []
+
+    def test_dict_without_today_returns_none(self, _mock_now):
+        """Only stale days cached — caller must fall back to service calls."""
+        config_entry = _make_mock_config_entry(
+            areas=["SE4"],
+            today_str="2026-03-10",
+            today_entries=[
+                MockDeliveryPeriodEntry(
+                    start=datetime(2026, 3, 10, 0, 0, tzinfo=CET),
+                    end=datetime(2026, 3, 10, 1, 0, tzinfo=CET),
+                    entry={"SE4": 100.0},
+                ),
+            ],
+            as_dict=True,
+        )
+
+        assert _get_native_coordinator_prices(config_entry) is None
+
+
+class TestFetchNativeDateErrors:
+    """Transport failures must degrade to no prices, not escape the coordinator."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            aiohttp.ClientConnectorError(MagicMock(), OSError("Network unreachable")),
+            aiohttp.ClientError("boom"),
+            TimeoutError(),
+            HomeAssistantError("entry not loaded"),
+        ],
+    )
+    async def test_transport_errors_return_empty(self, error):
+        """pynordpool lets raw aiohttp errors through the service call."""
+        hass = MagicMock()
+        hass.services.async_call = AsyncMock(side_effect=error)
+
+        result = await _async_fetch_native_date(hass, "entry_id", date(2026, 3, 12))
+
+        assert result == []
 
 
 class TestDerivePriceUnit:
