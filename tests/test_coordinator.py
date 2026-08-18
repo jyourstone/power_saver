@@ -770,3 +770,91 @@ class TestTransientPriceLoss:
         data = await self._run(coord, now + timedelta(days=3))
 
         assert data.emergency_mode is True
+
+
+class TestEmergencyModeControlsEntities:
+    """Emergency mode must actually run the appliance, not just claim to.
+
+    It reported STATE_ACTIVE but returned before calling _control_entities, so
+    a device that was off when prices vanished stayed off while the sensor
+    showed it as active.
+    """
+
+    @pytest.fixture
+    def coord(self):
+        from custom_components.power_saver.coordinator import PowerSaverCoordinator
+
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.entry_id = "test_emergency"
+        entry.data = {
+            "nordpool_sensor": "sensor.nordpool",
+            "nordpool_type": "hacs",
+        }
+        entry.options = {"strategy": "lowest_price", "hours_per_period": 2.0}
+
+        with patch("custom_components.power_saver.coordinator.Store"):
+            coord = PowerSaverCoordinator(hass, entry)
+
+        coord._state_loaded = True
+        coord._store = AsyncMock()
+        coord._control_entities = AsyncMock()
+        return coord
+
+    async def _run(self, coord, now):
+        with patch(
+            "custom_components.power_saver.coordinator.async_get_prices",
+            AsyncMock(return_value=([], [])),
+        ), patch(
+            "custom_components.power_saver.coordinator.dt_util.now",
+            return_value=now,
+        ):
+            return await coord._async_update_data()
+
+    async def test_turns_on_device_that_was_off(self, coord, now):
+        """The case that silently failed: appliance off when prices vanish."""
+        coord._previous_state = "standby"
+
+        data = await self._run(coord, now)
+
+        assert data.emergency_mode is True
+        coord._control_entities.assert_awaited_once_with("active")
+        assert coord._previous_state == "active"
+
+    async def test_does_not_re_trigger_while_already_active(self, coord, now):
+        """Repeated emergency refreshes must not spam the service call."""
+        coord._previous_state = "active"
+
+        await self._run(coord, now)
+
+        coord._control_entities.assert_not_awaited()
+
+    async def test_force_off_still_wins(self, coord, now):
+        """Always off must keep the appliance off even during an outage."""
+        coord._force_off = True
+        coord._previous_state = "active"
+
+        data = await self._run(coord, now)
+
+        assert data.current_state == "forced_off"
+        coord._control_entities.assert_awaited_once_with("forced_off")
+
+    async def test_recovery_transition_uses_emergency_state(self, coord, now, today_prices):
+        """After emergency, _previous_state must reflect what was actually set."""
+        coord._previous_state = "standby"
+        await self._run(coord, now)
+        coord._control_entities.reset_mock()
+
+        # Prices return; schedule puts us in standby at `now`
+        with patch(
+            "custom_components.power_saver.coordinator.async_get_prices",
+            AsyncMock(return_value=(today_prices, [])),
+        ), patch(
+            "custom_components.power_saver.coordinator.dt_util.now",
+            return_value=now,
+        ):
+            data = await coord._async_update_data()
+
+        assert data.emergency_mode is False
+        if data.current_state != "active":
+            coord._control_entities.assert_awaited_once_with(data.current_state)

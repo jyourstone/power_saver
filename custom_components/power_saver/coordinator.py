@@ -525,6 +525,14 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             else:
                 current_state = STATE_ACTIVE
 
+            # Emergency mode is the safety net that keeps the appliance running
+            # without prices, so it has to actually drive the entities — an
+            # appliance that was off when prices vanished used to stay off
+            # while this reported it as active.
+            if current_state != self._previous_state:
+                await self._control_entities(current_state)
+                self._previous_state = current_state
+
             emergency_schedule = []
             for i in range(96):  # 24 hours * 4 slots per hour
                 slot_time = now + timedelta(minutes=i * 15)
