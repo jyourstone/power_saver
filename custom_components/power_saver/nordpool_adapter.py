@@ -36,6 +36,44 @@ def derive_price_unit(attributes: dict) -> str:
     return DEFAULT_PRICE_UNIT
 
 
+def split_by_local_day(
+    slots: list[dict], now: datetime
+) -> tuple[list[dict], list[dict]]:
+    """Bucket price slots into Home Assistant's local today and tomorrow.
+
+    Nord Pool delivery days are defined in CET, and the API labels each batch
+    with deliveryDateCET. Sorting batches by that label assigns whole CET days
+    to "today", which silently shifts the scheduling day for anyone outside
+    CET — EET (Finland, Baltics) runs an hour ahead, the UK an hour behind.
+
+    Slots are therefore assigned by their own start timestamp converted to
+    local time. Slots outside today and tomorrow are dropped, so callers that
+    supply only the CET days overlapping the local ones may come up short at
+    one edge; that is preferable to mislabelling a whole day.
+    """
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+
+    buckets: dict[date, list[tuple[datetime, dict]]] = {today: [], tomorrow: []}
+    for slot in slots:
+        start = slot.get("start")
+        try:
+            start_dt = (
+                start if isinstance(start, datetime) else datetime.fromisoformat(start)
+            ).astimezone(now.tzinfo)
+        except (TypeError, ValueError):
+            continue
+
+        bucket = buckets.get(start_dt.date())
+        if bucket is not None:
+            bucket.append((start_dt, slot))
+
+    return (
+        [slot for _dt, slot in sorted(buckets[today], key=lambda p: p[0])],
+        [slot for _dt, slot in sorted(buckets[tomorrow], key=lambda p: p[0])],
+    )
+
+
 def detect_nordpool_type(hass: HomeAssistant, entity_id: str) -> str:
     """Detect whether an entity is a HACS Nord Pool or native HA Nord Pool sensor.
 
@@ -204,15 +242,18 @@ async def _async_get_native_prices(
             )
             return raw_today, raw_tomorrow
 
-    # Fallback: individual service calls
+    # Fallback: individual service calls. The service takes a CET delivery
+    # date, so the two days fetched here are re-bucketed by local day rather
+    # than assumed to be the local today/tomorrow.
     _LOGGER.debug("Falling back to service calls for native Nord Pool prices")
-    today = dt_util.now().date()
+    now = dt_util.now()
+    today = now.date()
     tomorrow = today + timedelta(days=1)
 
-    raw_today = await _async_fetch_native_date(hass, config_entry_id, today)
-    raw_tomorrow = await _async_fetch_native_date(hass, config_entry_id, tomorrow)
+    fetched = await _async_fetch_native_date(hass, config_entry_id, today)
+    fetched += await _async_fetch_native_date(hass, config_entry_id, tomorrow)
 
-    return raw_today, raw_tomorrow
+    return split_by_local_day(fetched, now)
 
 
 def _get_native_coordinator_prices(
@@ -252,33 +293,18 @@ def _get_native_coordinator_prices(
         return None
     area = areas[0]
 
-    now = dt_util.now()
-    today_str = now.strftime("%Y-%m-%d")
-    tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    today_prices: list[dict] = []
-    tomorrow_prices: list[dict] = []
+    slots: list[dict] = []
 
     try:
         for delivery_period in delivery_periods:
-            requested_date = getattr(delivery_period, "requested_date", None)
-            period_entries = getattr(delivery_period, "entries", [])
-
-            if requested_date == today_str:
-                target = today_prices
-            elif requested_date == tomorrow_str:
-                target = tomorrow_prices
-            else:
-                continue
-
-            for entry in period_entries:
-                start = entry.start
-                end = entry.end
+            for entry in getattr(delivery_period, "entries", []):
                 price_mwh = entry.entry.get(area)
                 if price_mwh is None:
                     continue
 
-                target.append({
+                start = entry.start
+                end = entry.end
+                slots.append({
                     "start": (
                         start if isinstance(start, str) else start.isoformat()
                     ),
@@ -291,6 +317,8 @@ def _get_native_coordinator_prices(
             exc_info=True,
         )
         return None
+
+    today_prices, tomorrow_prices = split_by_local_day(slots, dt_util.now())
 
     if not today_prices:
         return None
