@@ -499,6 +499,18 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             )
             max_hours_off = 0
 
+        # A single failed price read is not an emergency. Nord Pool refreshes
+        # on the hour and can briefly return nothing; while the locked schedule
+        # still covers the current time it stays authoritative.
+        if not raw_today and self._locked_schedule:
+            if scheduler.find_current_slot(self._locked_schedule, now) is not None:
+                _LOGGER.warning(
+                    "No price data from Nord Pool sensor, reusing locked schedule"
+                )
+                return await self._build_data(
+                    self._locked_schedule, now, strategy, period_from, period_to, []
+                )
+
         # Emergency mode: no price data at all
         if not raw_today and not raw_tomorrow:
             _LOGGER.error(
@@ -512,6 +524,14 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 current_state = STATE_FORCED_OFF
             else:
                 current_state = STATE_ACTIVE
+
+            # Emergency mode is the safety net that keeps the appliance running
+            # without prices, so it has to actually drive the entities — an
+            # appliance that was off when prices vanished used to stay off
+            # while this reported it as active.
+            if current_state != self._previous_state:
+                await self._control_entities(current_state)
+                self._previous_state = current_state
 
             emergency_schedule = []
             for i in range(96):  # 24 hours * 4 slots per hour
@@ -573,6 +593,24 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         else:
             schedule = self._locked_schedule
 
+        return await self._build_data(
+            schedule, now, strategy, period_from, period_to, raw_today
+        )
+
+    async def _build_data(
+        self,
+        schedule: list[dict],
+        now: datetime,
+        strategy: str,
+        period_from: str,
+        period_to: str,
+        raw_today: list[dict],
+    ) -> PowerSaverData:
+        """Derive the current state and sensor values from a schedule.
+
+        ``raw_today`` may be empty when prices are temporarily unavailable and
+        the locked schedule is being reused; min/max price are then omitted.
+        """
         # Find current slot
         current_slot = scheduler.find_current_slot(schedule, now)
         if current_slot:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 
+import aiohttp
+
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -222,6 +224,11 @@ def _get_native_coordinator_prices(
     yesterday, today, and tomorrow. Each entry has a requested_date (str)
     and entries (list of DeliveryPeriodEntry with start, end, entry attrs).
 
+    pynordpool changed the container type of DeliveryPeriodsData.entries in
+    0.4.0 (shipped with HA 2026.8) from list[DeliveryPeriodData] to
+    dict[date, DeliveryPeriodData]. Iterating the dict yields date keys, so
+    both shapes are normalized to the delivery periods themselves here.
+
     Returns (today_prices, tomorrow_prices) or None if unable to read.
     """
     coordinator = getattr(config_entry, "runtime_data", None)
@@ -235,6 +242,8 @@ def _get_native_coordinator_prices(
     entries = getattr(data, "entries", None)
     if not entries:
         return None
+
+    delivery_periods = entries.values() if isinstance(entries, dict) else entries
 
     # Get area(s) from the native config entry's data
     areas = config_entry.data.get("areas", [])
@@ -251,7 +260,7 @@ def _get_native_coordinator_prices(
     tomorrow_prices: list[dict] = []
 
     try:
-        for delivery_period in entries:
+        for delivery_period in delivery_periods:
             requested_date = getattr(delivery_period, "requested_date", None)
             period_entries = getattr(delivery_period, "entries", [])
 
@@ -304,7 +313,11 @@ async def _async_fetch_native_date(
             blocking=True,
             return_response=True,
         )
-    except (HomeAssistantError, KeyError, ValueError):
+    except (HomeAssistantError, aiohttp.ClientError, TimeoutError, KeyError, ValueError):
+        # pynordpool only wraps its own NordPool* errors, so transport-level
+        # failures (connection refused, DNS, TLS) surface as raw aiohttp
+        # errors through the service call. Uncaught, they escape the
+        # coordinator and mark every entity unavailable.
         _LOGGER.debug(
             "Failed to fetch native Nord Pool prices for %s (may not be available yet)",
             target_date,
