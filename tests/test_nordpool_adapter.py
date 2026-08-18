@@ -792,6 +792,90 @@ class TestGetNativeCoordinatorPricesDictEntries:
         assert _get_native_coordinator_prices(config_entry) is None
 
 
+EET = timezone(timedelta(hours=3))  # Finland in summer, one hour ahead of CEST
+
+
+class TestLocalDayBucketing:
+    """"Today" must mean the user's local day, not Nord Pool's CET delivery day.
+
+    Nord Pool labels each price batch with deliveryDateCET. Matching that label
+    against Home Assistant's local date silently shifts the scheduling day for
+    anyone outside CET — EET (Finland, Baltics) runs an hour ahead, the UK an
+    hour behind.
+    """
+
+    def _cet_day(self, day: int, hours: int = 24) -> list[MockDeliveryPeriodEntry]:
+        """One CET delivery day of hourly slots, priced by hour for identification."""
+        return [
+            MockDeliveryPeriodEntry(
+                start=datetime(2026, 3, day, h, 0, tzinfo=CET),
+                end=datetime(2026, 3, day, h, 0, tzinfo=CET) + timedelta(hours=1),
+                entry={"SE4": float(h)},
+            )
+            for h in range(hours)
+        ]
+
+    def test_eet_user_gets_their_own_local_day(self):
+        """At 14:00 Finnish time, "today" is the Finnish calendar day."""
+        # Cache holds three CET delivery days, as the native coordinator does
+        periods = [
+            MockDeliveryPeriodData(requested_date="2026-03-11", entries=self._cet_day(11)),
+            MockDeliveryPeriodData(requested_date="2026-03-12", entries=self._cet_day(12)),
+            MockDeliveryPeriodData(requested_date="2026-03-13", entries=self._cet_day(13)),
+        ]
+        coordinator = MagicMock()
+        coordinator.data = MockDeliveryPeriodsData(entries=periods)
+        config_entry = MagicMock()
+        config_entry.data = {"areas": ["SE4"]}
+        config_entry.runtime_data = coordinator
+
+        now = datetime(2026, 3, 12, 14, 0, tzinfo=EET)
+        with patch(
+            "custom_components.power_saver.nordpool_adapter.dt_util.now",
+            return_value=now,
+        ):
+            result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, _tomorrow_prices = result
+
+        # Every slot returned as "today" must fall on the user's local 12 March
+        local_dates = {
+            datetime.fromisoformat(s["start"]).astimezone(EET).date()
+            for s in today_prices
+        }
+        assert local_dates == {date(2026, 3, 12)}
+
+        # A full local day, starting at local midnight
+        assert len(today_prices) == 24
+        first = datetime.fromisoformat(today_prices[0]["start"]).astimezone(EET)
+        assert (first.hour, first.minute) == (0, 0)
+
+    def test_cet_user_unaffected(self):
+        """The existing CET behaviour must not change."""
+        periods = [
+            MockDeliveryPeriodData(requested_date="2026-03-12", entries=self._cet_day(12)),
+            MockDeliveryPeriodData(requested_date="2026-03-13", entries=self._cet_day(13)),
+        ]
+        coordinator = MagicMock()
+        coordinator.data = MockDeliveryPeriodsData(entries=periods)
+        config_entry = MagicMock()
+        config_entry.data = {"areas": ["SE4"]}
+        config_entry.runtime_data = coordinator
+
+        now = datetime(2026, 3, 12, 14, 0, tzinfo=CET)
+        with patch(
+            "custom_components.power_saver.nordpool_adapter.dt_util.now",
+            return_value=now,
+        ):
+            result = _get_native_coordinator_prices(config_entry)
+
+        assert result is not None
+        today_prices, tomorrow_prices = result
+        assert len(today_prices) == 24
+        assert len(tomorrow_prices) == 24
+
+
 class TestFetchNativeDateErrors:
     """Transport failures must degrade to no prices, not escape the coordinator."""
 
