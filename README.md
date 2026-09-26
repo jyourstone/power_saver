@@ -95,6 +95,8 @@ The setup flow guides you through all settings in three steps:
 | **Exclude from / Exclude until** | Time range during which slots are never activated. Supports cross-midnight (e.g., 22:00 to 06:00). Both fields must be set (empty = disabled) |
 | **Controlled entities** | One or more `switch`, `input_boolean`, or `light` entities to turn on/off automatically (empty = disabled) |
 
+When the schedule changes state, Power Saver turns the controlled entities on or off and then checks that they actually reached that state. Any entity that didn't (for example after a cloud API error, or because its integration was still loading at startup) gets the command re-sent up to 5 times over the next several minutes (after about 10 s, 40 s, 100 s, 220 s and 520 s); if it still hasn't switched shortly after the last attempt (about 9 minutes after the change), a warning is logged. Once an entity has been seen in the right state, later changes made by a user or an automation are left alone. A change the device or its integration makes on its own (for example an optimistic state reverted after a failed command) is treated as a failed command and retried.
+
 ### Changing settings
 
 All settings can be changed at any time via **Settings** -> **Devices & Services** -> **Power Saver** -> **Configure**. The options flow follows the same 3-step structure. Changes take effect immediately.
