@@ -911,7 +911,9 @@ class TestControlEntitiesVerification:
             "controlled_entities": ["switch.a", "switch.b"],
         }
         coordinator.hass.services.async_call = AsyncMock()
-        coordinator.hass.async_create_task = MagicMock(side_effect=tasks.append)
+        coordinator.hass.async_create_task = MagicMock(
+            side_effect=lambda coro, **_kwargs: tasks.append(coro)
+        )
         coordinator.hass.states.get = MagicMock(
             side_effect=lambda eid: MagicMock(state=states[eid]) if eid in states else None
         )
@@ -983,6 +985,11 @@ class TestControlEntitiesVerification:
 
         coordinator.hass.services.async_call.assert_awaited_once_with(
             "homeassistant", service, {"entity_id": ["switch.b"]}
+        )
+        # Dispatched before the callback returns, so a newer transition's
+        # cancel can't be overtaken by a still-queued re-send
+        coordinator.hass.async_create_task.assert_called_once_with(
+            ANY, eager_start=True
         )
         mock_call_later.assert_called_once_with(
             coordinator.hass, EXPECTED_CONTROL_RETRY_DELAYS[1], ANY

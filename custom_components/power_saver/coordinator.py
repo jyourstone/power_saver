@@ -786,7 +786,11 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
                 mismatched, target, service,
             )
             self._schedule_control_verify(service, mismatched, attempt + 1)
-            self.hass.async_create_task(self._async_send_control(service, mismatched))
+            # Eager start dispatches the (non-blocking) call before this returns,
+            # so no queued re-send can outlive a newer transition's cancel
+            self.hass.async_create_task(
+                self._async_send_control(service, mismatched), eager_start=True
+            )
 
         unsub_track = async_track_state_change_event(
             self.hass, entities, _on_state_change
