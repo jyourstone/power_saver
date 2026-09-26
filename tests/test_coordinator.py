@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,6 +25,7 @@ NORDPOOL_TYPE_NATIVE = "native"
 EXPECTED_CLOCK_REFRESH_DELAY_SECONDS = 10
 EXPECTED_CLOCK_REFRESH_SUPPRESS_SECONDS = 20
 EXPECTED_CLOCK_REFRESH_MINUTES = (0, 15, 30, 45)
+EXPECTED_CONTROL_RETRY_DELAYS = (10, 30, 60, 120, 300, 30)
 
 
 def _make_coordinator_for_refresh_tracking(nordpool_type=NORDPOOL_TYPE_HACS):
@@ -302,6 +304,8 @@ class TestRefreshTracking:
         coordinator._unsub_native_coordinator = MagicMock()
         coordinator._unsub_clock_refresh = MagicMock()
         coordinator._unsub_delayed_clock_refresh = MagicMock()
+        unsub_verify = MagicMock()
+        coordinator._unsub_control_verify = unsub_verify
 
         with patch(
             "custom_components.power_saver.coordinator.DataUpdateCoordinator.async_shutdown",
@@ -314,6 +318,8 @@ class TestRefreshTracking:
         assert coordinator._unsub_native_coordinator is None
         assert coordinator._unsub_clock_refresh is None
         assert coordinator._unsub_delayed_clock_refresh is None
+        unsub_verify.assert_called_once()
+        assert coordinator._unsub_control_verify is None
         mock_super_shutdown.assert_awaited_once()
 
 
@@ -858,3 +864,348 @@ class TestEmergencyModeControlsEntities:
         assert data.emergency_mode is False
         if data.current_state != "active":
             coord._control_entities.assert_awaited_once_with(data.current_state)
+
+
+class TestControlEntitiesVerification:
+    """Controlled entities are checked after a transition and retried.
+
+    The service call is fire-and-forget, so a failed device command (e.g. a
+    Tuya cloud error) or an entity not loaded yet at startup used to leave the
+    appliance in the wrong state until the next transition. See issue #48.
+    """
+
+    FIRE_TIME = datetime(2026, 2, 6, 14, 0, 10, tzinfo=timezone.utc)
+
+    @pytest.fixture(autouse=True)
+    def mock_track(self):
+        """Patch the state tracker that records entities reaching the target."""
+        with patch(
+            "custom_components.power_saver.coordinator.async_track_state_change_event"
+        ) as mock_track:
+            yield mock_track
+
+    @pytest.fixture(autouse=True)
+    def mock_call_later(self):
+        """Patch the verification timer."""
+        with patch(
+            "custom_components.power_saver.coordinator.async_call_later"
+        ) as mock_call_later:
+            yield mock_call_later
+
+    @pytest.fixture
+    def states(self) -> dict[str, str]:
+        """Mutable entity_id -> state map backing hass.states.get."""
+        return {}
+
+    @pytest.fixture
+    def tasks(self) -> list:
+        """Coroutines passed to hass.async_create_task."""
+        return []
+
+    @pytest.fixture
+    def coordinator(self, states, tasks):
+        coordinator = _make_coordinator_for_refresh_tracking()
+        coordinator._shutdown_requested = False
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.config_entry.options = {
+            "controlled_entities": ["switch.a", "switch.b"],
+        }
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.async_create_task = MagicMock(side_effect=tasks.append)
+        coordinator.hass.states.get = MagicMock(
+            side_effect=lambda eid: MagicMock(state=states[eid]) if eid in states else None
+        )
+        return coordinator
+
+    async def _fire_scheduled_check(self, mock_call_later, tasks) -> None:
+        """Run the pending verification timer and await any re-sends."""
+        action = mock_call_later.call_args.args[2]
+        mock_call_later.reset_mock()
+        action(self.FIRE_TIME)
+        for coro in tasks:
+            await coro
+        tasks.clear()
+
+    @staticmethod
+    def _emit_state(
+        mock_track, states, entity_id, new_state, user_id=None, parent_id=None
+    ) -> None:
+        """Set an entity's state and deliver it to the pending tracker."""
+        states[entity_id] = new_state
+        event = MagicMock(
+            data={"entity_id": entity_id, "new_state": MagicMock(state=new_state)},
+            context=MagicMock(user_id=user_id, parent_id=parent_id),
+        )
+        mock_track.call_args.args[2](event)
+
+    @pytest.mark.parametrize("send_error", [None, Exception("boom")])
+    async def test_control_sends_non_blocking_and_schedules_first_verify(
+        self, coordinator, mock_call_later, send_error
+    ):
+        """The command is fire-and-forget (a synchronous error is logged) and a
+        check is scheduled as a callback."""
+        from homeassistant.core import HassJobType, get_hassjob_callable_job_type
+
+        coordinator.hass.services.async_call.side_effect = send_error
+
+        await coordinator._control_entities("standby")
+
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            "homeassistant", "turn_off", {"entity_id": ["switch.a", "switch.b"]}
+        )
+        mock_call_later.assert_called_once_with(
+            coordinator.hass, EXPECTED_CONTROL_RETRY_DELAYS[0], ANY
+        )
+        assert coordinator._unsub_control_verify is not None
+        # Must run on the event loop, not in an executor thread
+        action = mock_call_later.call_args.args[2]
+        assert get_hassjob_callable_job_type(action) is HassJobType.Callback
+
+    @pytest.mark.parametrize(
+        ("new_state", "service", "initial_states"),
+        [
+            ("standby", "turn_off", {"switch.a": "off", "switch.b": "on"}),
+            ("active", "turn_on", {"switch.a": "on", "switch.b": "off"}),
+        ],
+    )
+    async def test_verify_mismatch_resends_only_mismatched_entities(
+        self, coordinator, mock_call_later, states, tasks,
+        new_state, service, initial_states,
+    ):
+        """Only entities that missed the target get the command again."""
+        states.update(initial_states)
+        target = initial_states["switch.a"]
+
+        await coordinator._control_entities(new_state)
+        coordinator.hass.services.async_call.reset_mock()
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            "homeassistant", service, {"entity_id": ["switch.b"]}
+        )
+        mock_call_later.assert_called_once_with(
+            coordinator.hass, EXPECTED_CONTROL_RETRY_DELAYS[1], ANY
+        )
+
+        # The retry worked: the next check stops without doing anything,
+        # even though switch.a (confirmed at the first check) was changed
+        states["switch.b"] = target
+        states["switch.a"] = initial_states["switch.b"]
+        coordinator.hass.services.async_call.reset_mock()
+        coordinator.hass.async_create_task.reset_mock()
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        mock_call_later.assert_not_called()
+        coordinator.hass.async_create_task.assert_not_called()
+        coordinator.hass.services.async_call.assert_not_awaited()
+        assert coordinator._unsub_control_verify is None
+
+    @pytest.mark.parametrize("b_state", [None, "unavailable", "unknown"])
+    async def test_verify_missing_or_unavailable_entity_is_mismatch(
+        self, coordinator, mock_call_later, states, tasks, b_state
+    ):
+        """An entity not loaded yet (boot race) or unavailable is retried."""
+        states["switch.a"] = "off"
+        if b_state is not None:
+            states["switch.b"] = b_state
+
+        await coordinator._control_entities("standby")
+        coordinator.hass.services.async_call.reset_mock()
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            "homeassistant", "turn_off", {"entity_id": ["switch.b"]}
+        )
+        mock_call_later.assert_called_once_with(
+            coordinator.hass, EXPECTED_CONTROL_RETRY_DELAYS[1], ANY
+        )
+
+    async def test_gives_up_with_warning_after_last_delay(
+        self, coordinator, mock_call_later, states, tasks, caplog
+    ):
+        """Retries are bounded and end with a warning naming the entity."""
+        caplog.set_level(logging.WARNING, logger="custom_components.power_saver.coordinator")
+        states.update({"switch.a": "off", "switch.b": "on"})
+
+        await coordinator._control_entities("standby")
+        for delay in EXPECTED_CONTROL_RETRY_DELAYS:
+            mock_call_later.assert_called_once_with(coordinator.hass, delay, ANY)
+            await self._fire_scheduled_check(mock_call_later, tasks)
+
+        mock_call_later.assert_not_called()
+        assert coordinator._unsub_control_verify is None
+        calls = coordinator.hass.services.async_call.await_args_list
+        # 1 initial send + a re-send after every check but the last
+        assert len(calls) == len(EXPECTED_CONTROL_RETRY_DELAYS)
+        assert all(c.args[2] == {"entity_id": ["switch.b"]} for c in calls[1:])
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "switch.b" in message
+        assert "off" in message
+
+    @pytest.mark.parametrize(
+        "changed_by", [{"parent_id": "automation-run"}, {"user_id": "user"}]
+    )
+    async def test_entity_that_reached_target_is_left_alone(
+        self, coordinator, mock_call_later, states, tasks, mock_track, changed_by
+    ):
+        """A user or automation change after the entity switched is not undone."""
+        states.update({"switch.a": "on", "switch.b": "on"})
+
+        await coordinator._control_entities("standby")
+        mock_track.assert_called_once()
+        assert mock_track.call_args.args[1] == ["switch.a", "switch.b"]
+        track_unsub = mock_track.return_value
+        coordinator.hass.services.async_call.reset_mock()
+
+        # switch.a turns off, then a user or automation turns it back on;
+        # switch.b never switches (failed command)
+        self._emit_state(mock_track, states, "switch.a", "off")
+        self._emit_state(mock_track, states, "switch.a", "on", **changed_by)
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        track_unsub.assert_called_once()
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            "homeassistant", "turn_off", {"entity_id": ["switch.b"]}
+        )
+
+        # The retry works; the next check covers only switch.b, so switch.a
+        # stays on
+        states["switch.b"] = "off"
+        coordinator.hass.services.async_call.reset_mock()
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        mock_call_later.assert_not_called()
+
+    async def test_entity_reverted_by_integration_is_retried(
+        self, coordinator, mock_call_later, states, tasks, mock_track
+    ):
+        """An optimistic state the integration reverts (no user or automation
+        behind the change) means the command failed, so it is retried."""
+        states.update({"switch.a": "on", "switch.b": "off"})
+
+        await coordinator._control_entities("standby")
+        coordinator.hass.services.async_call.reset_mock()
+
+        self._emit_state(mock_track, states, "switch.a", "off")
+        self._emit_state(mock_track, states, "switch.a", "on")
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            "homeassistant", "turn_off", {"entity_id": ["switch.a"]}
+        )
+
+    async def test_entity_removed_from_options_is_not_retried(
+        self, coordinator, mock_call_later, states, tasks
+    ):
+        """A pending retry drops entities no longer in the controlled list."""
+        states.update({"switch.a": "off", "switch.b": "on"})
+
+        await coordinator._control_entities("standby")
+        coordinator.hass.services.async_call.reset_mock()
+        coordinator.config_entry.options = {"controlled_entities": ["switch.a"]}
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        mock_call_later.assert_not_called()
+
+    async def test_entity_already_at_target_is_left_alone(
+        self, coordinator, mock_call_later, states, tasks
+    ):
+        """An entity already in the target state when the command goes out is
+        not retried, even if it is changed before the check."""
+        states.update({"switch.a": "off", "switch.b": "off"})
+
+        await coordinator._control_entities("standby")
+        coordinator.hass.services.async_call.reset_mock()
+        states["switch.a"] = "on"
+
+        await self._fire_scheduled_check(mock_call_later, tasks)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        coordinator.hass.async_create_task.assert_not_called()
+        mock_call_later.assert_not_called()
+        assert coordinator._unsub_control_verify is None
+
+    async def test_no_control_after_shutdown(self, coordinator, mock_call_later):
+        """A refresh that outlives async_shutdown must not control entities."""
+        coordinator._shutdown_requested = True
+
+        await coordinator._control_entities("standby")
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        mock_call_later.assert_not_called()
+        assert coordinator._unsub_control_verify is None
+
+    @pytest.mark.parametrize(
+        ("method", "flag"),
+        [("async_set_force_on", "_force_on"), ("async_set_force_off", "_force_off")],
+    )
+    async def test_clearing_override_cancels_pending_verify(
+        self, coordinator, method, flag
+    ):
+        """Turning Always on/off off stops retrying the forced state."""
+        setattr(coordinator, flag, True)
+        pending = MagicMock()
+        coordinator._unsub_control_verify = pending
+
+        await getattr(coordinator, method)(False)
+
+        pending.assert_called_once()
+        assert coordinator._unsub_control_verify is None
+
+    async def test_clearing_inactive_override_keeps_other_override_verify(
+        self, coordinator
+    ):
+        """Turning off an already-off Always off keeps the Always on retry."""
+        coordinator._force_on = True
+        coordinator._force_off = False
+        pending = MagicMock()
+        coordinator._unsub_control_verify = pending
+
+        await coordinator.async_set_force_off(False)
+
+        pending.assert_not_called()
+        assert coordinator._unsub_control_verify is pending
+
+    async def test_new_control_call_cancels_pending_verify(
+        self, coordinator, mock_call_later
+    ):
+        """A new transition replaces the pending check of the previous one."""
+        unsub1 = MagicMock()
+        unsub2 = MagicMock()
+        mock_call_later.side_effect = [unsub1, unsub2]
+
+        await coordinator._control_entities("standby")
+        await coordinator._control_entities("active")
+
+        unsub1.assert_called_once()
+        unsub2.assert_not_called()
+        assert coordinator._unsub_control_verify is not None
+        assert coordinator.hass.services.async_call.await_args.args == (
+            "homeassistant", "turn_on", {"entity_id": ["switch.a", "switch.b"]}
+        )
+
+    async def test_control_with_no_entities_still_cancels_pending_verify(
+        self, coordinator, mock_call_later
+    ):
+        """Clearing controlled entities must not leave a retry running."""
+        coordinator.config_entry.options = {}
+        pending = MagicMock()
+        coordinator._unsub_control_verify = pending
+
+        await coordinator._control_entities("active")
+
+        pending.assert_called_once()
+        assert coordinator._unsub_control_verify is None
+        coordinator.hass.services.async_call.assert_not_awaited()
+        mock_call_later.assert_not_called()

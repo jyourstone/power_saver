@@ -20,7 +20,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from homeassistant.const import SERVICE_TURN_OFF, SERVICE_TURN_ON
+from homeassistant.const import SERVICE_TURN_OFF, SERVICE_TURN_ON, STATE_OFF, STATE_ON
 
 from .const import (
     CONF_ALWAYS_CHEAP,
@@ -67,6 +67,10 @@ STORAGE_VERSION = 2
 CLOCK_REFRESH_DELAY_SECONDS = 10
 CLOCK_REFRESH_SUPPRESS_SECONDS = CLOCK_REFRESH_DELAY_SECONDS * 2
 CLOCK_REFRESH_MINUTES = tuple(range(0, 60, UPDATE_INTERVAL_MINUTES))
+# Seconds to wait before each check that controlled entities reached their
+# target state. A mismatch re-sends the command; the last check only confirms
+# the final re-send and gives up.
+CONTROL_RETRY_DELAYS = (10, 30, 60, 120, 300, 30)
 
 
 @dataclass
@@ -117,6 +121,7 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         self._unsub_native_coordinator: CALLBACK_TYPE | None = None
         self._unsub_clock_refresh: CALLBACK_TYPE | None = None
         self._unsub_delayed_clock_refresh: CALLBACK_TYPE | None = None
+        self._unsub_control_verify: CALLBACK_TYPE | None = None
         self._last_nordpool_refresh_request: datetime | None = None
         self._previous_state: str | None = None
         self._force_on: bool = False
@@ -202,6 +207,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def async_set_force_on(self, active: bool) -> None:
         """Set or clear the Always on state."""
+        if self._force_on and not active:
+            self._cancel_control_verify()  # Stop retrying the cleared override
         self._force_on = active
         if active:
             self._force_off = False
@@ -212,6 +219,8 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def async_set_force_off(self, active: bool) -> None:
         """Set or clear the Always off state."""
+        if self._force_off and not active:
+            self._cancel_control_verify()  # Stop retrying the cleared override
         self._force_off = active
         if active:
             self._force_on = False
@@ -681,6 +690,11 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
 
     async def _control_entities(self, new_state: str) -> None:
         """Turn controlled entities on/off based on the new state."""
+        # A new transition supersedes any pending check of the previous one
+        self._cancel_control_verify()
+        if self._shutdown_requested:
+            return  # A refresh that outlived async_shutdown must not control
+
         entities = self.config_entry.options.get(CONF_CONTROLLED_ENTITIES, [])
         if not entities:
             return
@@ -691,6 +705,11 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             new_state, service, entities,
         )
 
+        self._schedule_control_verify(service, entities, 0)
+        await self._async_send_control(service, entities)
+
+    async def _async_send_control(self, service: str, entities: list[str]) -> None:
+        """Call homeassistant.turn_on/turn_off without waiting for the result."""
         try:
             await self.hass.services.async_call(
                 "homeassistant",
@@ -699,6 +718,89 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
             )
         except Exception:
             _LOGGER.exception("Failed to control entities %s", entities)
+
+    @callback
+    def _cancel_control_verify(self) -> None:
+        """Cancel any pending check of controlled entities."""
+        if self._unsub_control_verify:
+            self._unsub_control_verify()
+            self._unsub_control_verify = None
+
+    @callback
+    def _schedule_control_verify(
+        self, service: str, entities: list[str], attempt: int
+    ) -> None:
+        """Re-send the command to entities not seen in the target state in time.
+
+        The service call is fire-and-forget, so a device error (e.g. a cloud
+        API failure) or an entity whose integration has not loaded yet at
+        startup only shows up in the entity's state. Entities seen in the
+        target state are not retried, so a user or automation change made
+        after they switched is left alone.
+        """
+        target = STATE_ON if service == SERVICE_TURN_ON else STATE_OFF
+        reached = {
+            entity_id
+            for entity_id in entities
+            if (state := self.hass.states.get(entity_id)) is not None
+            and state.state == target
+        }
+
+        @callback
+        def _on_state_change(event: Event) -> None:
+            new_state = event.data["new_state"]
+            if new_state is not None and new_state.state == target:
+                reached.add(event.data["entity_id"])
+            elif event.context.user_id is None and event.context.parent_id is None:
+                # Not a user or an automation: the integration undid the
+                # command (e.g. an optimistic state reverted on failure)
+                reached.discard(event.data["entity_id"])
+
+        @callback
+        def _on_verify_elapsed(_now: datetime) -> None:
+            self._cancel_control_verify()  # Stop tracking state changes
+            controlled = self.config_entry.options.get(CONF_CONTROLLED_ENTITIES, [])
+            mismatched = [
+                entity_id
+                for entity_id in entities
+                if entity_id in controlled  # Not removed in the options since
+                and entity_id not in reached
+                and (
+                    (state := self.hass.states.get(entity_id)) is None
+                    or state.state != target
+                )
+            ]
+            if not mismatched:
+                _LOGGER.debug("Controlled entities %s reached %s", entities, target)
+                return
+
+            if attempt + 1 >= len(CONTROL_RETRY_DELAYS):
+                _LOGGER.warning(
+                    "Controlled entities %s did not turn %s after %d retries, giving up",
+                    mismatched, target, attempt,
+                )
+                return
+
+            _LOGGER.info(
+                "Controlled entities %s are not %s yet, retrying homeassistant.%s",
+                mismatched, target, service,
+            )
+            self._schedule_control_verify(service, mismatched, attempt + 1)
+            self.hass.async_create_task(self._async_send_control(service, mismatched))
+
+        unsub_track = async_track_state_change_event(
+            self.hass, entities, _on_state_change
+        )
+        unsub_timer = async_call_later(
+            self.hass, CONTROL_RETRY_DELAYS[attempt], _on_verify_elapsed
+        )
+
+        @callback
+        def _unsub() -> None:
+            unsub_track()
+            unsub_timer()  # No-op once fired
+
+        self._unsub_control_verify = _unsub
 
     async def _async_load_state(self) -> None:
         """Load persisted state from storage."""
@@ -793,4 +895,5 @@ class PowerSaverCoordinator(DataUpdateCoordinator[PowerSaverData]):
         if self._unsub_delayed_clock_refresh:
             self._unsub_delayed_clock_refresh()
             self._unsub_delayed_clock_refresh = None
+        self._cancel_control_verify()
         await super().async_shutdown()
