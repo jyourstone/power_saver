@@ -102,7 +102,7 @@
         },
         "data_description": {
           "hours_per_period": "Antal billigaste timmar att aktivera inom varje period.",
-          "period_from": "Start av optimeringsperioden. När lika med periodens slut är varje kalenderdag en period.",
+          "period_from": "Start av optimeringsperioden. Om den är samma som periodens slut blir varje period 24 timmar från denna tid (00:00 = kalenderdygn).",
           "period_to": "Slut av optimeringsperioden. Stöder midnattsövergående perioder (t.ex. 22:00 till 06:00).",
           "min_consecutive_hours": "Minsta antal sammanhängande timmar per aktivt block. Förhindrar korta på/av-cykler. Lämna tomt för att inaktivera."
         }

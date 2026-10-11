@@ -78,7 +78,7 @@ The setup flow guides you through all settings in three steps:
 |-------|----------|-------------|
 | **Hours to activate per period** | Lowest Price | Number of cheapest hours to activate within each period |
 | **Period start time** | Lowest Price | Start of the optimization period |
-| **Period end time** | Lowest Price | End of the optimization period. Set both to the same value (e.g., 00:00) for full-day optimization. Supports cross-midnight periods (e.g., 22:00 to 06:00) |
+| **Period end time** | Lowest Price | End of the optimization period. Set both to the same value for 24-hour periods starting at that time (00:00 = calendar day). Supports cross-midnight periods (e.g., 22:00 to 06:00) |
 | **Minimum consecutive active hours** | Lowest Price | Minimum consecutive hours per active block. Prevents short on/off cycling (empty = disabled) |
 | **Minimum hours on** | Minimum Runtime | Total hours the device must run within each rolling window. Runtime is spread across the cheapest available slots (e.g., 4 hours to heat a water tank) |
 | **Rolling window** | Minimum Runtime | Size of the rolling time window in hours. The device must run for at least the minimum hours within this window (e.g., 28 hours = at least 4 hours on every 28 hours) |
@@ -114,7 +114,7 @@ How it works:
 2. Slots are partitioned into periods based on period start/end times
 3. Within each period, the cheapest slots are activated up to the minimum hours quota
 4. Thresholds (always-cheap, always-expensive, similarity) are applied per period
-5. If minimum consecutive hours is set, short blocks are merged into longer ones
+5. If minimum consecutive hours is set, short blocks are moved to wherever they cost least (extending a block or forming a new one), keeping the total hours unchanged
 
 ### Minimum Runtime
 
@@ -126,7 +126,7 @@ How it works:
 1. The schedule is computed once when price data becomes available and locked — it is never recalculated until new prices arrive or settings change
 2. A rolling window defines the total period (e.g., 28 hours). The device must be on for at least the minimum hours within this window
 3. Within each window, the cheapest available slots are activated up to the minimum hours quota
-4. Runtime can be spread across individual 15-minute slots or grouped into consecutive blocks (if minimum consecutive hours is set)
+4. Runtime can be spread across individual 15-minute slots or grouped into consecutive blocks inside each window (if minimum consecutive hours is set)
 5. On first run (no history), the full window is available for scheduling
 6. Always-cheap slots get bonus activations outside the scheduled window
 

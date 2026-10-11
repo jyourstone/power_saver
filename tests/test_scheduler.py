@@ -31,6 +31,7 @@ _partition_into_periods = scheduler._partition_into_periods
 _build_base_schedule = scheduler._build_base_schedule
 _activate_cheapest_in_group = scheduler._activate_cheapest_in_group
 _find_active_blocks = scheduler._find_active_blocks
+_enforce_min_consecutive = scheduler._enforce_min_consecutive
 _is_excluded = scheduler._is_excluded
 
 from helpers import TZ, make_nordpool_hour, make_nordpool_slot
@@ -794,6 +795,220 @@ class TestMinConsecutiveHours:
             f"Expected at least one consecutive 4-slot block in future active slots, "
             f"got: {[t.strftime('%H:%M') for t in active_times]}"
         )
+
+
+def _slots(*specs: tuple[float, str]) -> list[dict]:
+    """Build a 15-minute schedule from (price, status) pairs starting at 00:00."""
+    base = datetime(2026, 2, 6, tzinfo=TZ)
+    return [
+        {"price": p, "time": (base + timedelta(minutes=15 * i)).isoformat(), "status": st}
+        for i, (p, st) in enumerate(specs)
+    ]
+
+
+A, S = "active", "standby"
+
+
+def _active_idx(schedule: list[dict]) -> list[int]:
+    return [i for i, s in enumerate(schedule) if s["status"] == "active"]
+
+
+def _active_times(
+    schedule: list[dict], start: datetime | None = None, end: datetime | None = None
+) -> list[datetime]:
+    """Start times of active slots, optionally limited to [start, end)."""
+    times = [datetime.fromisoformat(s["time"]) for s in schedule if s["status"] == "active"]
+    return [t for t in times if (start is None or t >= start) and (end is None or t < end)]
+
+
+class TestConsolidationPlacement:
+    """Freed short-block slots are re-placed at minimum cost (issue #50 follow-up)."""
+
+    def test_cheaper_standalone_block_beats_pricier_extension(self, now):
+        """A long block must not be extended into pricier slots when a cheaper
+        standalone block exists, and the quota must be kept exactly."""
+        schedule = _slots(
+            (0.20, A), (0.25, S), (0.25, S), (0.25, S),      # 0-3: single + cheap window
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),      # 4-7
+            (0.40, S), (0.40, S), (0.40, S),                 # 8-10: pricier extension
+            (0.10, A), (0.09, A), (0.09, A), (0.09, A), (0.09, A),  # 11-15: long block
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),      # 16-19
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 20: single
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 24: single
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 28: single
+        )
+        _enforce_min_consecutive(schedule, 1.0, 2.25, None, now=now)
+
+        assert _active_idx(schedule) == [0, 1, 2, 3, 11, 12, 13, 14, 15]
+
+    def test_quota_not_overshot_when_one_slot_freed(self, now):
+        """A single freed slot extends a long block by one slot instead of
+        activating a whole window."""
+        schedule = _slots(
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 0: single
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),
+            (0.40, S), (0.40, S), (0.40, S),                 # 8-10
+            (0.10, A), (0.09, A), (0.09, A), (0.09, A), (0.09, A),  # 11-15
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),
+        )
+        _enforce_min_consecutive(schedule, 1.0, 1.5, None, now=now)
+
+        assert _active_idx(schedule) == [10, 11, 12, 13, 14, 15]
+
+    def test_never_places_before_start_idx(self, now):
+        """Freed slots are never moved before start_idx (the past)."""
+        schedule = _slots(
+            (0.05, S), (0.05, S), (0.05, S), (0.05, S),      # 0-3: cheap but past
+            (0.50, S), (0.30, A), (0.40, S), (0.40, S),      # 5: single
+            (0.40, S), (0.50, S), (0.50, S), (0.50, S),
+        )
+        _enforce_min_consecutive(schedule, 1.0, 1.0, None, now=now, start_idx=4)
+
+        assert _active_idx(schedule) == [5, 6, 7, 8]
+
+    def test_short_history_block_does_not_drop_freed_slots(self, now):
+        """A short active block in the past is left alone and must not stop the
+        freed future slots from being re-placed."""
+        schedule = _slots(*[(0.10 + 0.01 * i, S) for i in range(24)])
+        for i in (2, 3, 16, 17):  # 2-3: past always-cheap run, 16-17: short future run
+            schedule[i]["status"] = A
+        _enforce_min_consecutive(schedule, 1.0, 4.0, None, now=now, start_idx=10)
+
+        assert _active_idx(schedule) == [2, 3, 10, 11, 12, 13]
+
+    def test_short_block_spanning_start_idx_is_history(self, now):
+        """A short block that started before start_idx (e.g. an always-cheap
+        run spanning the current slot) is left alone, past slots included."""
+        schedule = _slots(*[(0.10 + 0.01 * i, S) for i in range(24)])
+        for i in (9, 10):  # 9 is past, 10 is the current slot
+            schedule[i]["status"] = A
+        _enforce_min_consecutive(schedule, 1.0, 4.0, None, now=now, start_idx=10)
+
+        assert _active_idx(schedule) == [9, 10]
+
+    def test_extending_a_short_run_must_reach_the_minimum(self, now):
+        """New slots added next to a short given run (e.g. a fallback window's
+        scattered slot) must make that run reach the minimum length."""
+        schedule = _slots(*[(0.10, S)] * 12)
+        schedule[3]["status"] = A  # short given run just before lo
+        picked = scheduler._place_in_runs(schedule, 2, 4, set(range(4, 12)), False, lo=4)
+
+        # 2 slots can't make a valid block, so the smallest overshoot is 3,
+        # turning 3-6 into one full block.
+        assert sorted(picked) == [4, 5, 6]
+
+    def test_minimum_runtime_does_not_schedule_in_the_past(self):
+        """Minimum Runtime recomputed mid-day must keep its runtime in the future
+        even when past slots were cheaper."""
+        prices = []
+        for h in range(24):
+            for q in range(4):
+                price = 0.05 if h < 12 else 0.50
+                if h in (16, 19, 22) and q == 0:
+                    price = 0.30
+                prices.append(make_nordpool_slot(h, price, quarter=q))
+        now = datetime(2026, 2, 6, 14, 30, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=0.75, now=now,
+            max_hours_off=6, min_consecutive_hours=0.75,
+        )
+
+        active = _active_times(schedule)
+        assert len(active) == 3
+        assert all(t >= now for t in active), [t.strftime("%H:%M") for t in active]
+
+    def test_minimum_runtime_block_stays_inside_its_window(self):
+        """Consolidation must not move a window's runtime past its deadline."""
+        prices = []
+        for h in range(24):
+            for q in range(4):
+                price = 0.50
+                if (h, q) in ((14, 3), (15, 0), (16, 0), (17, 0)):
+                    price = 0.30  # scattered cheap slots in window 1
+                if h == 19:
+                    price = 0.35  # cheap hour just after window 1
+                if h == 22:
+                    price = 0.10
+                prices.append(make_nordpool_slot(h, price, quarter=q))
+        now = datetime(2026, 2, 6, 14, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=1.0, now=now,
+            max_hours_off=4, last_on_time=now, min_consecutive_hours=1.0,
+        )
+
+        # Off since 14:00 with max 4 h off: the device must be on by 18:00.
+        active = _active_times(schedule)
+        assert active and active[0] < now + timedelta(hours=4), [
+            t.strftime("%H:%M") for t in active
+        ]
+        assert all(length >= 4 for _, length in _find_active_blocks(schedule))
+
+    def test_minimum_runtime_keeps_runtime_in_window_without_room_for_a_block(self):
+        """When no full block fits in a window, its runtime stays inside that
+        window instead of being consolidated past the deadline."""
+        prices = [
+            make_nordpool_slot(h, (0.10 if (h * 4 + q) % 2 == 0 else 0.90) if h < 3 else 0.30, quarter=q)
+            for h in range(24) for q in range(4)
+        ]
+        now = datetime(2026, 2, 6, 0, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=2.0, now=now,
+            max_hours_off=4, last_on_time=now - timedelta(hours=3),
+            min_consecutive_hours=2.0, always_expensive=0.5,
+        )
+
+        # Window 1 ends at 03:00 (deadline 01:00 + 2 h); only every other
+        # slot is allowed there, so no 2 h block fits.
+        assert _active_times(schedule, end=now + timedelta(hours=3))
+
+    def test_minimum_runtime_window_keeps_full_runtime_when_only_one_block_fits(self):
+        """If only part of the runtime fits as whole blocks, the window still
+        gets its full runtime instead of silently running less."""
+        prices = []
+        for i in range(96):
+            if i < 4:
+                price = 0.20  # the only 1 h block in window 1
+            elif i < 16:
+                price = 0.30 if i % 2 else 0.90  # isolated allowed slots
+            else:
+                price = 0.40
+            prices.append(make_nordpool_slot(i // 4, price, quarter=i % 4))
+        now = datetime(2026, 2, 6, 0, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=2.0, now=now,
+            max_hours_off=2, min_consecutive_hours=1.0, always_expensive=0.5,
+        )
+
+        # Window 1 is 00:00-04:00 (deadline 02:00 + 2 h) and needs 8 slots.
+        assert len(_active_times(schedule, end=now + timedelta(hours=4))) >= 8
+
+    def test_minimum_runtime_still_consolidates_bonus_slots(self):
+        """A lone always-cheap bonus slot is consolidated into a full block,
+        while the window's own block stays where it was picked."""
+        prices = []
+        for h in range(24):
+            for q in range(4):
+                price = 0.50
+                if h == 16:
+                    price = 0.30
+                if (h, q) == (20, 0):
+                    price = 0.01  # always-cheap bonus, isolated
+                prices.append(make_nordpool_slot(h, price, quarter=q))
+        now = datetime(2026, 2, 6, 14, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=1.0, now=now,
+            max_hours_off=6, last_on_time=now, min_consecutive_hours=1.0,
+            always_cheap=0.05,
+        )
+
+        assert all(length >= 4 for _, length in _find_active_blocks(schedule))
+        block_16 = _active_times(schedule, now + timedelta(hours=2), now + timedelta(hours=3))
+        assert len(block_16) == 4
 
 
 class TestMostExpensiveMode:
@@ -1575,6 +1790,110 @@ class TestLowestPriceStrategy:
             assert len(day_active) == 4, (
                 f"Expected 4 active slots on {day}, got {len(day_active)}"
             )
+
+    @pytest.mark.parametrize("min_consecutive_hours", [None, 1.0])
+    def test_equal_from_to_is_24h_period_anchored_at_from(self, now, min_consecutive_hours):
+        """13:15 -> 13:15 is a 24h period starting 13:15, not a calendar day.
+
+        Regression test for issue #50: the quota for today 13:15 -> tomorrow
+        13:15 was spent on today's evening (cheapest on today's calendar day)
+        instead of tomorrow's clearly cheaper early morning.
+        """
+        today_prices = [
+            slot for h in range(24)
+            for slot in make_nordpool_hour(h, 0.50 if h == 20 else 1.00)
+        ]
+        tomorrow_prices = [
+            slot for h in range(24)
+            for slot in make_nordpool_hour(
+                h, {3: 0.20, 22: 0.40}.get(h, 1.00), day_offset=1
+            )
+        ]
+
+        schedule = build_lowest_price_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+            period_from="13:15:00",
+            period_to="13:15:00",
+            min_consecutive_hours=min_consecutive_hours,
+        )
+
+        window_start = datetime(2026, 2, 6, 13, 15, tzinfo=TZ)
+        window_end = window_start + timedelta(days=1)
+        window_active = _active_times(schedule, window_start, window_end)
+        tomorrow_3am = datetime(2026, 2, 7, 3, 0, tzinfo=TZ)
+        assert window_active == [
+            tomorrow_3am + timedelta(minutes=15 * q) for q in range(4)
+        ]
+        # The status sensor counts the same 13:15-anchored period.
+        assert scheduler.active_hours_in_current_period(
+            schedule, "13:15:00", "13:15:00", now
+        ) == 1.0
+
+    @pytest.mark.parametrize("period", ["00:00:00", "13:15:00"])
+    def test_equal_from_to_consecutive_stays_inside_each_period(self, now, period):
+        """Consecutive consolidation keeps each 24h period's quota inside it.
+
+        Tomorrow's 03:00-06:00 scattered cheap quarters belong to the period
+        starting today at ``period``; consolidating them must not move them
+        into tomorrow evening's cheaper long run, which belongs to the next
+        period (00:00: next calendar day; 13:15: tomorrow 13:15).
+        """
+        today_prices = []
+        tomorrow_prices = []
+        for hour in range(24):
+            for quarter in range(4):
+                price = 0.10 if hour in (3, 4, 5, 6) and quarter == 0 else 2.00
+                today_prices.append(make_nordpool_slot(hour, price, quarter=quarter))
+                tomorrow_prices.append(make_nordpool_slot(
+                    hour, 0.05 if hour >= 20 else price, day_offset=1, quarter=quarter
+                ))
+
+        schedule = build_lowest_price_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+            period_from=period,
+            period_to=period,
+            min_consecutive_hours=1.0,
+        )
+
+        hour, minute = int(period[:2]), int(period[3:5])
+        for day_offset in (0, 1):
+            window_start = datetime(2026, 2, 6, hour, minute, tzinfo=TZ) + timedelta(days=day_offset)
+            window_end = window_start + timedelta(days=1)
+            window_active = _active_times(schedule, window_start, window_end)
+            assert len(window_active) == 4, (
+                f"Expected 4 active slots in period from {window_start}, got {window_active}"
+            )
+            assert window_active == [
+                window_active[0] + timedelta(minutes=15 * q) for q in range(4)
+            ], f"Active slots in period from {window_start} are not one block"
+
+    def test_full_day_selects_on_unrounded_prices(self, now):
+        """00:00 -> 00:00 picks the truly cheapest hour, not the earliest of equal rounded prices."""
+        prices = [
+            slot for h in range(24)
+            for slot in make_nordpool_hour(h, {0: 0.1004, 5: 0.0996}.get(h, 1.00))
+        ]
+
+        schedule = build_lowest_price_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now,
+            period_from="00:00:00",
+            period_to="00:00:00",
+        )
+
+        active_hours = {
+            datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            for s in schedule if s["status"] == "active"
+        }
+        assert active_hours == {5}
 
 
 class TestMinimumRuntimeStrategy:
