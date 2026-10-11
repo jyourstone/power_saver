@@ -444,9 +444,9 @@ def _place_in_runs(
 ) -> list[int] | None:
     """Pick ``count`` slots from ``placeable`` within schedule[lo:hi] at the
     lowest total price (highest if inverted) so every run of active slots is
-    at least ``run_len`` long. A run that touches an already-active slot
-    (including one just before ``lo``) counts as long enough, since those
-    slots are given.
+    at least ``run_len`` long. Already-active slots (including a run ending
+    just before ``lo``) count toward runs; a run made only of those is given
+    and may stay short, but any run a picked slot joins must reach run_len.
 
     Takes exactly ``count`` slots if possible, else the smallest overshoot,
     else the largest under-run. ``must_idx`` is a slot that has to be picked.
@@ -455,35 +455,40 @@ def _place_in_runs(
     placement exists (only possible with ``must_idx``).
     """
     # Dynamic programming over the slots with state (slots picked, current
-    # run length capped at run_len).
+    # run length capped at run_len, whether the run holds a picked slot).
     # ponytail: O(slots * count * run_len) states — ~20 ms worst measured,
     # with long consecutive minimums (large run_len × count); prune if it lags.
     hi = len(schedule) if hi is None else hi
-    start_run = run_len if lo > 0 and schedule[lo - 1].get("status") == "active" else 0
+    start_run = 0
+    while start_run < run_len and lo - start_run > 0 and (
+        schedule[lo - start_run - 1].get("status") == "active"
+    ):
+        start_run += 1
+
+    def can_end(run: int, fresh: bool) -> bool:
+        return run in (0, run_len) or not fresh
 
     def solve(max_placed: int) -> list[dict]:
-        # layers[k][(placed, run)] = (cost, previous state, slot lo+k-1 picked)
-        layers: list[dict] = [{(0, start_run): (0.0, None, False)}]
+        # layers[k][(placed, run, fresh)] = (cost, previous state, slot lo+k-1 picked)
+        layers: list[dict] = [{(0, start_run, False): (0.0, None, False)}]
         for i in range(lo, hi):
             kept = schedule[i].get("status") == "active"
             price = schedule[i].get("price", 0)
             slot_cost = -price if inverted else price
             nxt: dict = {}
-            for (placed, run), (cost, _, _) in layers[-1].items():
+            for (placed, run, fresh), (cost, _, _) in layers[-1].items():
+                longer = min(run + 1, run_len)
                 options = []
                 if kept:
-                    options.append(((placed, run_len), cost, False))
+                    options.append(((placed, longer, fresh), cost, False))
                 else:
-                    # A run may only end once it is long enough
-                    if run in (0, run_len) and i != must_idx:
-                        options.append(((placed, 0), cost, False))
+                    if can_end(run, fresh) and i != must_idx:
+                        options.append(((placed, 0, False), cost, False))
                     if i in placeable and placed < max_placed:
-                        options.append(
-                            ((placed + 1, min(run + 1, run_len)), cost + slot_cost, True)
-                        )
+                        options.append(((placed + 1, longer, True), cost + slot_cost, True))
                 for state, new_cost, is_new in options:
                     if state not in nxt or new_cost < nxt[state][0]:
-                        nxt[state] = (new_cost, (placed, run), is_new)
+                        nxt[state] = (new_cost, (placed, run, fresh), is_new)
             layers.append(nxt)
         return layers
 
@@ -491,8 +496,8 @@ def _place_in_runs(
     # them when the exact count is impossible.
     for max_placed in (count, count + run_len - 1):
         layers = solve(max_placed)
-        final = {s: v[0] for s, v in layers[-1].items() if s[1] in (0, run_len)}
-        if any(placed == count for placed, _ in final):
+        final = {s: v[0] for s, v in layers[-1].items() if can_end(s[1], s[2])}
+        if any(s[0] == count for s in final):
             break
     if not final:
         return None
@@ -536,8 +541,8 @@ def _enforce_min_consecutive(
         now: Current datetime (timezone-aware). Kept for interface compatibility.
         inverted: If True, use inverted selection logic.
         always_cheap: Price threshold; in inverted mode, slots at/below are never activated.
-        start_idx: Slots before this index are history: short blocks that end
-            before it are left alone and nothing is placed before it.
+        start_idx: Slots before this index are history: short blocks that
+            start before it are left alone and nothing is placed before it.
         keep: Indices that must stay where they are; short blocks containing
             any of them are not moved.
 
@@ -563,7 +568,7 @@ def _enforce_min_consecutive(
     blocks = _find_active_blocks(schedule)
     short_blocks = [
         (start, length) for start, length in blocks
-        if length < effective_slots and start + length > start_idx
+        if length < effective_slots and start >= start_idx
         and keep.isdisjoint(range(start, start + length))
     ]
 

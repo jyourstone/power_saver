@@ -876,6 +876,27 @@ class TestConsolidationPlacement:
 
         assert _active_idx(schedule) == [2, 3, 10, 11, 12, 13]
 
+    def test_short_block_spanning_start_idx_is_history(self, now):
+        """A short block that started before start_idx (e.g. an always-cheap
+        run spanning the current slot) is left alone, past slots included."""
+        schedule = _slots(*[(0.10 + 0.01 * i, S) for i in range(24)])
+        for i in (9, 10):  # 9 is past, 10 is the current slot
+            schedule[i]["status"] = A
+        _enforce_min_consecutive(schedule, 1.0, 4.0, None, now=now, start_idx=10)
+
+        assert _active_idx(schedule) == [9, 10]
+
+    def test_extending_a_short_run_must_reach_the_minimum(self, now):
+        """New slots added next to a short given run (e.g. a fallback window's
+        scattered slot) must make that run reach the minimum length."""
+        schedule = _slots(*[(0.10, S)] * 12)
+        schedule[3]["status"] = A  # short given run just before lo
+        picked = scheduler._place_in_runs(schedule, 2, 4, set(range(4, 12)), False, lo=4)
+
+        # 2 slots can't make a valid block, so the smallest overshoot is 3,
+        # turning 3-6 into one full block.
+        assert sorted(picked) == [4, 5, 6]
+
     def test_minimum_runtime_does_not_schedule_in_the_past(self):
         """Minimum Runtime recomputed mid-day must keep its runtime in the future
         even when past slots were cheaper."""
