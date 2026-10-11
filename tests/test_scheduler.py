@@ -31,6 +31,7 @@ _partition_into_periods = scheduler._partition_into_periods
 _build_base_schedule = scheduler._build_base_schedule
 _activate_cheapest_in_group = scheduler._activate_cheapest_in_group
 _find_active_blocks = scheduler._find_active_blocks
+_enforce_min_consecutive = scheduler._enforce_min_consecutive
 _is_excluded = scheduler._is_excluded
 
 from helpers import TZ, make_nordpool_hour, make_nordpool_slot
@@ -794,6 +795,118 @@ class TestMinConsecutiveHours:
             f"Expected at least one consecutive 4-slot block in future active slots, "
             f"got: {[t.strftime('%H:%M') for t in active_times]}"
         )
+
+
+def _slots(*specs: tuple[float, str]) -> list[dict]:
+    """Build a 15-minute schedule from (price, status) pairs starting at 00:00."""
+    base = datetime(2026, 2, 6, tzinfo=TZ)
+    return [
+        {"price": p, "time": (base + timedelta(minutes=15 * i)).isoformat(), "status": st}
+        for i, (p, st) in enumerate(specs)
+    ]
+
+
+def _active_idx(schedule: list[dict]) -> list[int]:
+    return [i for i, s in enumerate(schedule) if s["status"] == "active"]
+
+
+class TestConsolidationPlacement:
+    """Freed short-block slots are re-placed at minimum cost (issue #50 follow-up)."""
+
+    A, S = "active", "standby"
+
+    def test_cheaper_standalone_block_beats_pricier_extension(self, now):
+        """A long block must not be extended into pricier slots when a cheaper
+        standalone block exists, and the quota must be kept exactly."""
+        A, S = self.A, self.S
+        schedule = _slots(
+            (0.20, A), (0.25, S), (0.25, S), (0.25, S),      # 0-3: single + cheap window
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),      # 4-7
+            (0.40, S), (0.40, S), (0.40, S),                 # 8-10: pricier extension
+            (0.10, A), (0.09, A), (0.09, A), (0.09, A), (0.09, A),  # 11-15: long block
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),      # 16-19
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 20: single
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 24: single
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 28: single
+        )
+        _enforce_min_consecutive(schedule, 1.0, 2.25, None, now=now)
+
+        assert _active_idx(schedule) == [0, 1, 2, 3, 11, 12, 13, 14, 15]
+
+    def test_quota_not_overshot_when_one_slot_freed(self, now):
+        """A single freed slot extends a long block by one slot instead of
+        activating a whole window."""
+        A, S = self.A, self.S
+        schedule = _slots(
+            (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 0: single
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),
+            (0.40, S), (0.40, S), (0.40, S),                 # 8-10
+            (0.10, A), (0.09, A), (0.09, A), (0.09, A), (0.09, A),  # 11-15
+            (0.50, S), (0.50, S), (0.50, S), (0.50, S),
+        )
+        _enforce_min_consecutive(schedule, 1.0, 1.5, None, now=now)
+
+        assert _active_idx(schedule) == [10, 11, 12, 13, 14, 15]
+
+    def test_never_places_before_start_idx(self, now):
+        """Freed slots are never moved before start_idx (the past)."""
+        A, S = self.A, self.S
+        schedule = _slots(
+            (0.05, S), (0.05, S), (0.05, S), (0.05, S),      # 0-3: cheap but past
+            (0.50, S), (0.30, A), (0.40, S), (0.40, S),      # 5: single
+            (0.40, S), (0.50, S), (0.50, S), (0.50, S),
+        )
+        _enforce_min_consecutive(schedule, 1.0, 1.0, None, now=now, start_idx=4)
+
+        assert _active_idx(schedule) == [5, 6, 7, 8]
+
+    def test_minimum_runtime_does_not_schedule_in_the_past(self):
+        """Minimum Runtime recomputed mid-day must keep its runtime in the future
+        even when past slots were cheaper."""
+        prices = []
+        for h in range(24):
+            for q in range(4):
+                price = 0.05 if h < 12 else 0.50
+                if h in (16, 19, 22) and q == 0:
+                    price = 0.30
+                prices.append(make_nordpool_slot(h, price, quarter=q))
+        now = datetime(2026, 2, 6, 14, 30, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=0.75, now=now,
+            max_hours_off=6, min_consecutive_hours=0.75,
+        )
+
+        active = [datetime.fromisoformat(s["time"]) for s in schedule if s["status"] == "active"]
+        assert len(active) == 3
+        assert all(t >= now for t in active), [t.strftime("%H:%M") for t in active]
+
+    def test_minimum_runtime_block_stays_inside_its_window(self):
+        """Consolidation must not move a window's runtime past its deadline."""
+        prices = []
+        for h in range(24):
+            for q in range(4):
+                price = 0.50
+                if (h, q) in ((14, 3), (15, 0), (16, 0), (17, 0)):
+                    price = 0.30  # scattered cheap slots in window 1
+                if h == 19:
+                    price = 0.35  # cheap hour just after window 1
+                if h == 22:
+                    price = 0.10
+                prices.append(make_nordpool_slot(h, price, quarter=q))
+        now = datetime(2026, 2, 6, 14, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=1.0, now=now,
+            max_hours_off=4, last_on_time=now, min_consecutive_hours=1.0,
+        )
+
+        # Off since 14:00 with max 4 h off: the device must be on by 18:00.
+        active = [datetime.fromisoformat(s["time"]) for s in schedule if s["status"] == "active"]
+        assert active and active[0] < now + timedelta(hours=4), [
+            t.strftime("%H:%M") for t in active
+        ]
+        assert all(length >= 4 for _, length in _find_active_blocks(schedule))
 
 
 class TestMostExpensiveMode:

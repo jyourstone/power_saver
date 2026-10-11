@@ -286,68 +286,6 @@ def _find_active_blocks(schedule: list[dict]) -> list[tuple[int, int]]:
     return blocks
 
 
-def _find_consecutive_candidates(
-    schedule: list[dict],
-    window_size: int,
-    always_expensive: float | None,
-    always_cheap: float | None,
-    inverted: bool,
-    *,
-    start_idx: int = 0,
-    end_idx: int | None = None,
-) -> list[tuple[int, int, float]]:
-    """Find and rank candidate consecutive windows for activation.
-
-    Args:
-        schedule: The full schedule list.
-        window_size: Number of consecutive slots required.
-        always_expensive: Price ceiling (normal mode).
-        always_cheap: Price floor (inverted mode).
-        inverted: Whether using inverted selection mode.
-        start_idx: Only consider windows starting at or after this index.
-        end_idx: Windows must fit entirely before this index (exclusive).
-
-    Returns:
-        List of (start_index, new_activations_needed, total_price) tuples,
-        sorted by preference (fewest new activations first, then by price).
-    """
-    if end_idx is None:
-        end_idx = len(schedule)
-    candidates = []
-    for i in range(max(start_idx, 0), min(end_idx, len(schedule)) - window_size + 1):
-        window = schedule[i:i + window_size]
-
-        # Skip windows containing excluded slots
-        if any(s.get("status") == "excluded" for s in window):
-            continue
-
-        # Check price constraints for each slot in the window
-        valid = True
-        for s in window:
-            price = s.get("price", 0)
-            if not inverted and always_expensive is not None and price >= always_expensive:
-                valid = False
-                break
-            if inverted and always_cheap is not None and price <= always_cheap:
-                valid = False
-                break
-        if not valid:
-            continue
-
-        active_count = sum(1 for s in window if s.get("status") == "active")
-        new_needed = window_size - active_count
-        total_price = sum(s.get("price", 0) for s in window)
-        candidates.append((i, new_needed, total_price))
-
-    # Sort: fewest new activations first, then by price
-    if inverted:
-        candidates.sort(key=lambda x: (x[1], -x[2]))
-    else:
-        candidates.sort(key=lambda x: (x[1], x[2]))
-
-    return candidates
-
-
 # ---------------------------------------------------------------------------
 # Period partitioning (Lowest Price strategy)
 # ---------------------------------------------------------------------------
@@ -477,6 +415,83 @@ def active_hours_in_current_period(
 # Consecutive enforcement (shared by both strategies)
 # ---------------------------------------------------------------------------
 
+def _place_in_runs(
+    schedule: list[dict],
+    count: int,
+    run_len: int,
+    placeable: set[int],
+    inverted: bool,
+    *,
+    lo: int = 0,
+    hi: int | None = None,
+    start_run: int = 0,
+    must_idx: int | None = None,
+) -> list[int] | None:
+    """Pick ``count`` slots from ``placeable`` within schedule[lo:hi] at the
+    lowest total price (highest if inverted) so every run of active slots is
+    at least ``run_len`` long. Already-active slots count toward runs.
+
+    Takes exactly ``count`` slots if possible, else the smallest overshoot,
+    else the largest under-run. ``start_run`` is the length of an active run
+    ending just before ``lo`` (pass ``run_len`` if it is already complete);
+    ``must_idx`` is a slot that has to be picked.
+
+    Returns the picked indices (not yet activated), or None if no valid
+    placement exists.
+    """
+    # Dynamic programming over the slots with state (slots picked, current
+    # run length capped at run_len).
+    # ponytail: O(slots * count * run_len) states — a few ms typical, ~60 ms
+    # for 48 h of 4 h-in-6 h Minimum Runtime; prune if that ever lags.
+    hi = len(schedule) if hi is None else hi
+    max_placed = count + run_len - 1  # room for the smallest overshoot
+    # layers[k][(placed, run)] = (cost, previous state, slot lo+k-1 picked)
+    layers: list[dict] = [{(0, start_run): (0.0, None, False)}]
+    for i in range(lo, hi):
+        kept = schedule[i].get("status") == "active"
+        price = schedule[i].get("price", 0)
+        slot_cost = -price if inverted else price
+        nxt: dict = {}
+        for (placed, run), (cost, _, _) in layers[-1].items():
+            options = []
+            if kept:
+                options.append(((placed, min(run + 1, run_len)), cost, False))
+            else:
+                # A run may only end once it is long enough
+                if run in (0, run_len) and i != must_idx:
+                    options.append(((placed, 0), cost, False))
+                if i in placeable and placed < max_placed:
+                    options.append(
+                        ((placed + 1, min(run + 1, run_len)), cost + slot_cost, True)
+                    )
+            for state, new_cost, is_new in options:
+                if state not in nxt or new_cost < nxt[state][0]:
+                    nxt[state] = (new_cost, (placed, run), is_new)
+        layers.append(nxt)
+
+    final = {s: v[0] for s, v in layers[-1].items() if s[1] in (0, run_len)}
+    if not final:
+        return None
+    counts = {placed for placed, _ in final}
+    if count in counts:
+        target = count
+    elif any(c > count for c in counts):
+        target = min(c for c in counts if c > count)
+    else:
+        target = max(counts)
+    state = min(
+        ((target, 0), (target, run_len)),
+        key=lambda s: final.get(s, float("inf")),
+    )
+    picked = []
+    for k in range(len(layers) - 1, 0, -1):
+        _, state_before, is_new = layers[k][state]
+        if is_new:
+            picked.append(lo + k - 1)
+        state = state_before
+    return picked
+
+
 def _enforce_min_consecutive(
     schedule: list[dict],
     min_consecutive_hours: float,
@@ -486,14 +501,13 @@ def _enforce_min_consecutive(
     now: datetime,
     inverted: bool = False,
     always_cheap: float | None = None,
+    start_idx: int = 0,
 ) -> list[dict]:
     """Ensure all active blocks are at least min_consecutive_hours long.
 
-    Consolidates short blocks by deactivating their slots and
-    re-allocating them into the best consecutive windows.
-
-    The schedule is computed once and locked, so there is no past/future
-    boundary distinction — all blocks are treated uniformly.
+    Consolidates short blocks by deactivating their slots and re-placing
+    them where they cost least (extending long blocks or forming new ones),
+    keeping the number of active slots unchanged whenever possible.
 
     In normal mode: never activates slots at or above always_expensive.
     In inverted mode: never activates slots at or below always_cheap.
@@ -506,6 +520,8 @@ def _enforce_min_consecutive(
         now: Current datetime (timezone-aware). Kept for interface compatibility.
         inverted: If True, use inverted selection logic.
         always_cheap: Price threshold; in inverted mode, slots at/below are never activated.
+        start_idx: Slots before this index are history: short blocks that end
+            before it are left alone and nothing is placed before it.
 
     Returns:
         The modified schedule.
@@ -529,7 +545,7 @@ def _enforce_min_consecutive(
     blocks = _find_active_blocks(schedule)
     short_blocks = [
         (start, length) for start, length in blocks
-        if length < effective_slots
+        if length < effective_slots and start + length > start_idx
     ]
 
     if not short_blocks:
@@ -548,41 +564,26 @@ def _enforce_min_consecutive(
         freed, len(short_blocks),
     )
 
-    # Find candidate consecutive windows across the entire schedule
-    candidates = _find_consecutive_candidates(
-        schedule, effective_slots, always_expensive, always_cheap, inverted,
-    )
+    def allowed(price: float) -> bool:
+        if inverted:
+            return always_cheap is None or price > always_cheap
+        return always_expensive is None or price < always_expensive
 
-    activated_indices: set[int] = set()
-    slots_activated = 0
+    placeable = {
+        i for i in range(start_idx, len(schedule))
+        if schedule[i].get("status") == "standby"
+        and allowed(schedule[i].get("price", 0))
+    }
+    # Kept long blocks are already long enough, so picking nothing is always
+    # valid and this never returns None.
+    picked = _place_in_runs(schedule, freed, effective_slots, placeable, inverted) or []
+    for i in picked:
+        schedule[i]["status"] = "active"
 
-    for win_start, _new_needed, _score in candidates:
-        if freed <= 0:
-            break
-        win_range = set(range(win_start, win_start + effective_slots))
-        if win_range & activated_indices:
-            continue  # Skip overlapping windows
-
-        # Recount new_needed (may have changed from earlier window activations)
-        new_needed = sum(
-            1 for i in range(win_start, win_start + effective_slots)
-            if schedule[i].get("status") == "standby"
-        )
-        # Allow first window even when new_needed > freed to ensure at least
-        # one consecutive block is placed.
-        if slots_activated > 0 and new_needed > freed:
-            continue
-
-        for i in range(win_start, win_start + effective_slots):
-            if schedule[i].get("status") == "standby":
-                schedule[i]["status"] = "active"
-                freed -= 1
-                slots_activated += 1
-        activated_indices |= win_range
-
-    if freed > 0:
+    if len(picked) != freed:
         _LOGGER.debug(
-            "%d freed slots could not be placed in consecutive blocks", freed,
+            "Placed %d slots for %d freed to keep blocks consecutive",
+            len(picked), freed,
         )
 
     total_active = sum(1 for s in schedule if s.get("status") == "active")
@@ -810,6 +811,7 @@ def build_minimum_runtime_schedule(
     # consume required_slots quota when the schedule is recomputed mid-day.
     search_from = current_slot_idx
     windows_filled = 0
+    run_len = int(min(min_consecutive_hours or 0, min_hours_on) * 4)
 
     while search_from < len(schedule):
         # Window extends from search_from until deadline + min_hours_on
@@ -849,20 +851,35 @@ def build_minimum_runtime_schedule(
                     candidates.append((csi, schedule[csi]["price"]))
                 forced_idx = csi
 
-        # Sort by price (cheapest first, or most expensive first if inverted)
-        candidates.sort(key=lambda x: x[1], reverse=inverted)
+        # With a consecutive minimum, pick whole blocks inside this window so
+        # the next deadline is based on the slots that will actually run.
+        picked = None
+        if run_len:
+            prev_on = search_from > 0 and schedule[search_from - 1]["status"] == "active"
+            picked = _place_in_runs(
+                schedule, required_slots, run_len,
+                {idx for idx, _ in candidates}, inverted,
+                lo=search_from, hi=window_end_idx,
+                start_run=run_len if prev_on else 0, must_idx=forced_idx,
+            )
 
-        # Activate the best slots up to the required count
+        if picked:
+            selected = [(idx, schedule[idx]["price"]) for idx in picked]
+        else:
+            # Sort by price (cheapest first, or most expensive first if inverted)
+            candidates.sort(key=lambda x: x[1], reverse=inverted)
+            selected = candidates[:required_slots]
+
+            # If the forced ongoing slot wasn't selected by price, swap it in
+            if forced_idx is not None:
+                selected_idxs = {idx for idx, _ in selected}
+                if forced_idx not in selected_idxs and selected:
+                    # Replace the last (worst-priced) selected slot with the forced one
+                    selected[-1] = (forced_idx, schedule[forced_idx]["price"])
+
+        # Activate the selected slots
         last_activated_time = None
         activated = 0
-        selected = candidates[:required_slots]
-
-        # If the forced ongoing slot wasn't selected by price, swap it in
-        if forced_idx is not None:
-            selected_idxs = {idx for idx, _ in selected}
-            if forced_idx not in selected_idxs and selected:
-                # Replace the last (worst-priced) selected slot with the forced one
-                selected[-1] = (forced_idx, schedule[forced_idx]["price"])
 
         for idx, _ in selected:
             schedule[idx]["status"] = "active"
@@ -935,7 +952,7 @@ def build_minimum_runtime_schedule(
         schedule = _enforce_min_consecutive(
             schedule, min_consecutive_hours, min_hours_on,
             always_expensive, now=now, inverted=inverted,
-            always_cheap=always_cheap,
+            always_cheap=always_cheap, start_idx=current_slot_idx,
         )
 
     active_count = sum(1 for s in schedule if s.get("status") == "active")

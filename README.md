@@ -114,7 +114,7 @@ How it works:
 2. Slots are partitioned into periods based on period start/end times
 3. Within each period, the cheapest slots are activated up to the minimum hours quota
 4. Thresholds (always-cheap, always-expensive, similarity) are applied per period
-5. If minimum consecutive hours is set, short blocks are merged into longer ones
+5. If minimum consecutive hours is set, short blocks are moved to wherever they cost least (extending a block or forming a new one), keeping the total hours unchanged
 
 ### Minimum Runtime
 
@@ -126,7 +126,7 @@ How it works:
 1. The schedule is computed once when price data becomes available and locked — it is never recalculated until new prices arrive or settings change
 2. A rolling window defines the total period (e.g., 28 hours). The device must be on for at least the minimum hours within this window
 3. Within each window, the cheapest available slots are activated up to the minimum hours quota
-4. Runtime can be spread across individual 15-minute slots or grouped into consecutive blocks (if minimum consecutive hours is set)
+4. Runtime can be spread across individual 15-minute slots or grouped into consecutive blocks inside each window (if minimum consecutive hours is set)
 5. On first run (no history), the full window is available for scheduling
 6. Always-cheap slots get bonus activations outside the scheduled window
 
