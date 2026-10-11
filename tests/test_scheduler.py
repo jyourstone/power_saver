@@ -806,19 +806,27 @@ def _slots(*specs: tuple[float, str]) -> list[dict]:
     ]
 
 
+A, S = "active", "standby"
+
+
 def _active_idx(schedule: list[dict]) -> list[int]:
     return [i for i, s in enumerate(schedule) if s["status"] == "active"]
+
+
+def _active_times(
+    schedule: list[dict], start: datetime | None = None, end: datetime | None = None
+) -> list[datetime]:
+    """Start times of active slots, optionally limited to [start, end)."""
+    times = [datetime.fromisoformat(s["time"]) for s in schedule if s["status"] == "active"]
+    return [t for t in times if (start is None or t >= start) and (end is None or t < end)]
 
 
 class TestConsolidationPlacement:
     """Freed short-block slots are re-placed at minimum cost (issue #50 follow-up)."""
 
-    A, S = "active", "standby"
-
     def test_cheaper_standalone_block_beats_pricier_extension(self, now):
         """A long block must not be extended into pricier slots when a cheaper
         standalone block exists, and the quota must be kept exactly."""
-        A, S = self.A, self.S
         schedule = _slots(
             (0.20, A), (0.25, S), (0.25, S), (0.25, S),      # 0-3: single + cheap window
             (0.50, S), (0.50, S), (0.50, S), (0.50, S),      # 4-7
@@ -836,7 +844,6 @@ class TestConsolidationPlacement:
     def test_quota_not_overshot_when_one_slot_freed(self, now):
         """A single freed slot extends a long block by one slot instead of
         activating a whole window."""
-        A, S = self.A, self.S
         schedule = _slots(
             (0.20, A), (0.50, S), (0.50, S), (0.50, S),      # 0: single
             (0.50, S), (0.50, S), (0.50, S), (0.50, S),
@@ -850,7 +857,6 @@ class TestConsolidationPlacement:
 
     def test_never_places_before_start_idx(self, now):
         """Freed slots are never moved before start_idx (the past)."""
-        A, S = self.A, self.S
         schedule = _slots(
             (0.05, S), (0.05, S), (0.05, S), (0.05, S),      # 0-3: cheap but past
             (0.50, S), (0.30, A), (0.40, S), (0.40, S),      # 5: single
@@ -859,6 +865,16 @@ class TestConsolidationPlacement:
         _enforce_min_consecutive(schedule, 1.0, 1.0, None, now=now, start_idx=4)
 
         assert _active_idx(schedule) == [5, 6, 7, 8]
+
+    def test_short_history_block_does_not_drop_freed_slots(self, now):
+        """A short active block in the past is left alone and must not stop the
+        freed future slots from being re-placed."""
+        schedule = _slots(*[(0.10 + 0.01 * i, S) for i in range(24)])
+        for i in (2, 3, 16, 17):  # 2-3: past always-cheap run, 16-17: short future run
+            schedule[i]["status"] = A
+        _enforce_min_consecutive(schedule, 1.0, 4.0, None, now=now, start_idx=10)
+
+        assert _active_idx(schedule) == [2, 3, 10, 11, 12, 13]
 
     def test_minimum_runtime_does_not_schedule_in_the_past(self):
         """Minimum Runtime recomputed mid-day must keep its runtime in the future
@@ -877,7 +893,7 @@ class TestConsolidationPlacement:
             max_hours_off=6, min_consecutive_hours=0.75,
         )
 
-        active = [datetime.fromisoformat(s["time"]) for s in schedule if s["status"] == "active"]
+        active = _active_times(schedule)
         assert len(active) == 3
         assert all(t >= now for t in active), [t.strftime("%H:%M") for t in active]
 
@@ -902,11 +918,30 @@ class TestConsolidationPlacement:
         )
 
         # Off since 14:00 with max 4 h off: the device must be on by 18:00.
-        active = [datetime.fromisoformat(s["time"]) for s in schedule if s["status"] == "active"]
+        active = _active_times(schedule)
         assert active and active[0] < now + timedelta(hours=4), [
             t.strftime("%H:%M") for t in active
         ]
         assert all(length >= 4 for _, length in _find_active_blocks(schedule))
+
+    def test_minimum_runtime_keeps_runtime_in_window_without_room_for_a_block(self):
+        """When no full block fits in a window, its runtime stays inside that
+        window instead of being consolidated past the deadline."""
+        prices = [
+            make_nordpool_slot(h, (0.10 if (h * 4 + q) % 2 == 0 else 0.90) if h < 3 else 0.30, quarter=q)
+            for h in range(24) for q in range(4)
+        ]
+        now = datetime(2026, 2, 6, 0, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=2.0, now=now,
+            max_hours_off=4, last_on_time=now - timedelta(hours=3),
+            min_consecutive_hours=2.0, always_expensive=0.5,
+        )
+
+        # Window 1 ends at 03:00 (deadline 01:00 + 2 h); only every other
+        # slot is allowed there, so no 2 h block fits.
+        assert _active_times(schedule, end=now + timedelta(hours=3))
 
 
 class TestMostExpensiveMode:
@@ -1720,12 +1755,7 @@ class TestLowestPriceStrategy:
 
         window_start = datetime(2026, 2, 6, 13, 15, tzinfo=TZ)
         window_end = window_start + timedelta(days=1)
-        window_active = [
-            datetime.fromisoformat(s["time"]).astimezone(TZ)
-            for s in schedule
-            if s["status"] == "active"
-            and window_start <= datetime.fromisoformat(s["time"]) < window_end
-        ]
+        window_active = _active_times(schedule, window_start, window_end)
         tomorrow_3am = datetime(2026, 2, 7, 3, 0, tzinfo=TZ)
         assert window_active == [
             tomorrow_3am + timedelta(minutes=15 * q) for q in range(4)
@@ -1768,12 +1798,7 @@ class TestLowestPriceStrategy:
         for day_offset in (0, 1):
             window_start = datetime(2026, 2, 6, hour, minute, tzinfo=TZ) + timedelta(days=day_offset)
             window_end = window_start + timedelta(days=1)
-            window_active = [
-                datetime.fromisoformat(s["time"]).astimezone(TZ)
-                for s in schedule
-                if s["status"] == "active"
-                and window_start <= datetime.fromisoformat(s["time"]) < window_end
-            ]
+            window_active = _active_times(schedule, window_start, window_end)
             assert len(window_active) == 4, (
                 f"Expected 4 active slots in period from {window_start}, got {window_active}"
             )
