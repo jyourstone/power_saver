@@ -78,7 +78,7 @@ The setup flow guides you through all settings in three steps:
 |-------|----------|-------------|
 | **Hours to activate per period** | Lowest Price | Number of cheapest hours to activate within each period |
 | **Period start time** | Lowest Price | Start of the optimization period |
-| **Period end time** | Lowest Price | End of the optimization period. Set both to the same value (e.g., 00:00) for full-day optimization. Supports cross-midnight periods (e.g., 22:00 to 06:00) |
+| **Period end time** | Lowest Price | End of the optimization period. Set both to the same value for 24-hour periods starting at that time (00:00 = calendar day). Supports cross-midnight periods (e.g., 22:00 to 06:00) |
 | **Minimum consecutive active hours** | Lowest Price | Minimum consecutive hours per active block. Prevents short on/off cycling (empty = disabled) |
 | **Minimum hours on** | Minimum Runtime | Total hours the device must run within each rolling window. Runtime is spread across the cheapest available slots (e.g., 4 hours to heat a water tank) |
 | **Rolling window** | Minimum Runtime | Size of the rolling time window in hours. The device must run for at least the minimum hours within this window (e.g., 28 hours = at least 4 hours on every 28 hours) |

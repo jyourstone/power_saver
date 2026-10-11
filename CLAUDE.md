@@ -62,7 +62,7 @@ custom_components/power_saver/
 
 ### Scheduling Strategies
 
-**Lowest Price**: Activate cheapest N hours within fixed time periods. Supports full-day (period_from == period_to) or custom periods (e.g., 22:00→06:00). Per-period independent quota. Optional min_consecutive_hours constraint.
+**Lowest Price**: Activate cheapest N hours within fixed time periods. Supports 24-hour periods anchored at period_from when period_from == period_to (00:00 = calendar days, the default) or custom periods (e.g., 22:00→06:00). Per-period independent quota. Optional min_consecutive_hours constraint.
 
 **Minimum Runtime**: Ensure device runs at least `min_hours_on` within each `rolling_window` of hours. UI exposes `rolling_window` (total window size); coordinator derives `max_hours_off = rolling_window - min_hours_on` for the scheduler. Selects cheapest individual 15-minute slots (scattered) unless `min_consecutive_hours` is set. Tracks `last_on_time` persistently. On first run (no history), schedules within a full `max_hours_off` window.
 

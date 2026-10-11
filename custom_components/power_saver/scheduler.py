@@ -9,7 +9,7 @@ It provides two scheduling strategies:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -627,7 +627,8 @@ def build_lowest_price_schedule(
         now: Current datetime (timezone-aware).
         period_from: Period start time ("HH:MM"). Default "00:00".
         period_to: Period end time ("HH:MM"). Default "00:00".
-            When period_from == period_to, each calendar day is one period.
+            When period_from == period_to, each period is the 24 hours starting
+            at period_from; 00:00 gives calendar days.
         always_cheap: Always activate at or below this price. None = disabled.
         always_expensive: Never activate at or above this price. None = disabled.
         price_similarity_pct: Expand selection to similarly priced slots. None = disabled.
@@ -641,7 +642,10 @@ def build_lowest_price_schedule(
     """
     inverted = selection_mode == "most_expensive"
     min_slots = int(min_hours * 4)
-    full_day = period_from == period_to
+    # 00:00→00:00 keeps its per-raw-day path (selects on unrounded prices).
+    # Any other period, including e.g. 13:15→13:15 (24 h anchored at
+    # period_from), goes through the generic period partitioning.
+    full_day = period_from == period_to and _parse_time(period_from) == time(0)
     schedule: list[dict] = []
 
     _LOGGER.debug(
@@ -688,37 +692,17 @@ def build_lowest_price_schedule(
 
     # Apply minimum consecutive hours constraint if enabled
     if min_consecutive_hours is not None and min_consecutive_hours > 0:
-        if full_day:
-            # For full-day mode, enforce per calendar day (midnight-to-midnight)
-            # so each day's quota is respected independently. We do NOT use
-            # _partition_into_periods here because when period_from == period_to
-            # at a non-midnight time (e.g. 06:00→06:00) it creates 24-hour
-            # windows anchored at period_from, which can span two calendar days
-            # and allow cross-day slot migration.
-            days: dict[date, list[int]] = {}
-            for i, slot in enumerate(schedule):
-                slot_date = datetime.fromisoformat(slot["time"]).date()
-                days.setdefault(slot_date, []).append(i)
-            for day_indices in days.values():
-                sub = [schedule[i] for i in day_indices]
-                sub = _enforce_min_consecutive(
-                    sub, min_consecutive_hours, min_hours, always_expensive,
-                    now=now, inverted=inverted, always_cheap=always_cheap,
-                )
-                for local_i, global_i in enumerate(day_indices):
-                    schedule[global_i] = sub[local_i]
-        else:
-            # Custom period mode has an independent quota per period, so
-            # consecutive consolidation must stay inside those same bounds.
-            periods = _partition_into_periods(schedule, period_from, period_to, now)
-            for period_indices in periods:
-                sub = [schedule[i] for i in period_indices]
-                sub = _enforce_min_consecutive(
-                    sub, min_consecutive_hours, min_hours, always_expensive,
-                    now=now, inverted=inverted, always_cheap=always_cheap,
-                )
-                for local_i, global_i in enumerate(period_indices):
-                    schedule[global_i] = sub[local_i]
+        # Each period has an independent quota, so consecutive consolidation
+        # must stay inside those same bounds (calendar days for 00:00→00:00).
+        periods = _partition_into_periods(schedule, period_from, period_to, now)
+        for period_indices in periods:
+            sub = [schedule[i] for i in period_indices]
+            sub = _enforce_min_consecutive(
+                sub, min_consecutive_hours, min_hours, always_expensive,
+                now=now, inverted=inverted, always_cheap=always_cheap,
+            )
+            for local_i, global_i in enumerate(period_indices):
+                schedule[global_i] = sub[local_i]
 
     # Log statistics
     active_count = sum(1 for s in schedule if s.get("status") == "active")

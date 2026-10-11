@@ -1576,6 +1576,120 @@ class TestLowestPriceStrategy:
                 f"Expected 4 active slots on {day}, got {len(day_active)}"
             )
 
+    @pytest.mark.parametrize("min_consecutive_hours", [None, 1.0])
+    def test_equal_from_to_is_24h_period_anchored_at_from(self, now, min_consecutive_hours):
+        """13:15 -> 13:15 is a 24h period starting 13:15, not a calendar day.
+
+        Regression test for issue #50: the quota for today 13:15 -> tomorrow
+        13:15 was spent on today's evening (cheapest on today's calendar day)
+        instead of tomorrow's clearly cheaper early morning.
+        """
+        today_prices = [
+            slot for h in range(24)
+            for slot in make_nordpool_hour(h, 0.50 if h == 20 else 1.00)
+        ]
+        tomorrow_prices = [
+            slot for h in range(24)
+            for slot in make_nordpool_hour(
+                h, {3: 0.20, 22: 0.40}.get(h, 1.00), day_offset=1
+            )
+        ]
+
+        schedule = build_lowest_price_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+            period_from="13:15:00",
+            period_to="13:15:00",
+            min_consecutive_hours=min_consecutive_hours,
+        )
+
+        window_start = datetime(2026, 2, 6, 13, 15, tzinfo=TZ)
+        window_end = window_start + timedelta(days=1)
+        window_active = [
+            datetime.fromisoformat(s["time"]).astimezone(TZ)
+            for s in schedule
+            if s["status"] == "active"
+            and window_start <= datetime.fromisoformat(s["time"]) < window_end
+        ]
+        tomorrow_3am = datetime(2026, 2, 7, 3, 0, tzinfo=TZ)
+        assert window_active == [
+            tomorrow_3am + timedelta(minutes=15 * q) for q in range(4)
+        ]
+        # The status sensor counts the same 13:15-anchored period.
+        assert scheduler.active_hours_in_current_period(
+            schedule, "13:15:00", "13:15:00", now
+        ) == 1.0
+
+    @pytest.mark.parametrize("period", ["00:00:00", "13:15:00"])
+    def test_equal_from_to_consecutive_stays_inside_each_period(self, now, period):
+        """Consecutive consolidation keeps each 24h period's quota inside it.
+
+        Tomorrow's 03:00-06:00 scattered cheap quarters belong to the period
+        starting today at ``period``; consolidating them must not move them
+        into tomorrow evening's cheaper long run, which belongs to the next
+        period (00:00: next calendar day; 13:15: tomorrow 13:15).
+        """
+        today_prices = []
+        tomorrow_prices = []
+        for hour in range(24):
+            for quarter in range(4):
+                price = 0.10 if hour in (3, 4, 5, 6) and quarter == 0 else 2.00
+                today_prices.append(make_nordpool_slot(hour, price, quarter=quarter))
+                tomorrow_prices.append(make_nordpool_slot(
+                    hour, 0.05 if hour >= 20 else price, day_offset=1, quarter=quarter
+                ))
+
+        schedule = build_lowest_price_schedule(
+            raw_today=today_prices,
+            raw_tomorrow=tomorrow_prices,
+            min_hours=1.0,
+            now=now,
+            period_from=period,
+            period_to=period,
+            min_consecutive_hours=1.0,
+        )
+
+        hour, minute = int(period[:2]), int(period[3:5])
+        for day_offset in (0, 1):
+            window_start = datetime(2026, 2, 6, hour, minute, tzinfo=TZ) + timedelta(days=day_offset)
+            window_end = window_start + timedelta(days=1)
+            window_active = [
+                datetime.fromisoformat(s["time"]).astimezone(TZ)
+                for s in schedule
+                if s["status"] == "active"
+                and window_start <= datetime.fromisoformat(s["time"]) < window_end
+            ]
+            assert len(window_active) == 4, (
+                f"Expected 4 active slots in period from {window_start}, got {window_active}"
+            )
+            assert window_active == [
+                window_active[0] + timedelta(minutes=15 * q) for q in range(4)
+            ], f"Active slots in period from {window_start} are not one block"
+
+    def test_full_day_selects_on_unrounded_prices(self, now):
+        """00:00 -> 00:00 picks the truly cheapest hour, not the earliest of equal rounded prices."""
+        prices = [
+            slot for h in range(24)
+            for slot in make_nordpool_hour(h, {0: 0.1004, 5: 0.0996}.get(h, 1.00))
+        ]
+
+        schedule = build_lowest_price_schedule(
+            raw_today=prices,
+            raw_tomorrow=[],
+            min_hours=1.0,
+            now=now,
+            period_from="00:00:00",
+            period_to="00:00:00",
+        )
+
+        active_hours = {
+            datetime.fromisoformat(s["time"]).astimezone(TZ).hour
+            for s in schedule if s["status"] == "active"
+        }
+        assert active_hours == {5}
+
 
 class TestMinimumRuntimeStrategy:
     """Tests for the Minimum Runtime scheduling strategy."""

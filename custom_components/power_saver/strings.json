@@ -102,7 +102,7 @@
         },
         "data_description": {
           "hours_per_period": "Number of cheapest hours to activate within each period.",
-          "period_from": "Start of the optimization period. When equal to period end, each calendar day is one period.",
+          "period_from": "Start of the optimization period. When equal to period end, each period is 24 hours starting at this time (00:00 = calendar day).",
           "period_to": "End of the optimization period. Supports cross-midnight periods (e.g., 22:00 to 06:00).",
           "min_consecutive_hours": "Minimum consecutive hours per active block. Prevents short on/off cycling. Leave empty to disable."
         }
