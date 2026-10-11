@@ -943,6 +943,52 @@ class TestConsolidationPlacement:
         # slot is allowed there, so no 2 h block fits.
         assert _active_times(schedule, end=now + timedelta(hours=3))
 
+    def test_minimum_runtime_window_keeps_full_runtime_when_only_one_block_fits(self):
+        """If only part of the runtime fits as whole blocks, the window still
+        gets its full runtime instead of silently running less."""
+        prices = []
+        for i in range(96):
+            if i < 4:
+                price = 0.20  # the only 1 h block in window 1
+            elif i < 16:
+                price = 0.30 if i % 2 else 0.90  # isolated allowed slots
+            else:
+                price = 0.40
+            prices.append(make_nordpool_slot(i // 4, price, quarter=i % 4))
+        now = datetime(2026, 2, 6, 0, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=2.0, now=now,
+            max_hours_off=2, min_consecutive_hours=1.0, always_expensive=0.5,
+        )
+
+        # Window 1 is 00:00-04:00 (deadline 02:00 + 2 h) and needs 8 slots.
+        assert len(_active_times(schedule, end=now + timedelta(hours=4))) >= 8
+
+    def test_minimum_runtime_still_consolidates_bonus_slots(self):
+        """A lone always-cheap bonus slot is consolidated into a full block,
+        while the window's own block stays where it was picked."""
+        prices = []
+        for h in range(24):
+            for q in range(4):
+                price = 0.50
+                if h == 16:
+                    price = 0.30
+                if (h, q) == (20, 0):
+                    price = 0.01  # always-cheap bonus, isolated
+                prices.append(make_nordpool_slot(h, price, quarter=q))
+        now = datetime(2026, 2, 6, 14, 0, tzinfo=TZ)
+
+        schedule = build_minimum_runtime_schedule(
+            raw_today=prices, raw_tomorrow=[], min_hours_on=1.0, now=now,
+            max_hours_off=6, last_on_time=now, min_consecutive_hours=1.0,
+            always_cheap=0.05,
+        )
+
+        assert all(length >= 4 for _, length in _find_active_blocks(schedule))
+        block_16 = _active_times(schedule, now + timedelta(hours=2), now + timedelta(hours=3))
+        assert len(block_16) == 4
+
 
 class TestMostExpensiveMode:
     """Tests for the 'most_expensive' selection mode (inverted scheduling)."""

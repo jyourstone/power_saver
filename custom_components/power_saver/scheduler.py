@@ -659,7 +659,7 @@ def build_lowest_price_schedule(
     # 00:00→00:00 keeps its per-raw-day path (selects on unrounded prices).
     # Any other period, including e.g. 13:15→13:15 (24 h anchored at
     # period_from), goes through the generic period partitioning.
-    full_day = period_from == period_to and _parse_time(period_from) == time(0)
+    full_day = _parse_time(period_from) == _parse_time(period_to) == time(0)
     schedule: list[dict] = []
 
     _LOGGER.debug(
@@ -868,9 +868,11 @@ def build_minimum_runtime_schedule(
                 lo=search_from, hi=window_end_idx, must_idx=forced_idx,
             )
 
-        if picked:
+        if picked and len(picked) >= required_slots:
             selected = picked
         else:
+            # No room for the full runtime as whole blocks: keep the runtime
+            # (scattered) rather than run less than min_hours_on.
             # Sort by price (cheapest first, or most expensive first if inverted)
             candidates.sort(key=lambda x: x[1], reverse=inverted)
             selected = [idx for idx, _ in candidates[:required_slots]]
