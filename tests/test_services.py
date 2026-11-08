@@ -552,7 +552,7 @@ def test_find_coordinator_resolves_device():
     hass.data = {"power_saver": {"entry_123": coordinator}}
 
     device = MagicMock()
-    device.config_entries = {"entry_123"}
+    device.identifiers = {("other_domain", "x"), ("power_saver", "entry_123")}
 
     with patch(
         "custom_components.power_saver.dr.async_get"
@@ -582,10 +582,10 @@ def test_find_coordinator_raises_for_non_power_saver_device():
     from custom_components.power_saver import _find_coordinator
 
     hass = MagicMock()
-    hass.data = {"power_saver": {}}
+    hass.data = {"power_saver": {"entry_123": MagicMock()}}
 
     device = MagicMock()
-    device.config_entries = {"other_entry_id"}
+    device.identifiers = {("other_domain", "entry_123")}
 
     with patch(
         "custom_components.power_saver.dr.async_get"
