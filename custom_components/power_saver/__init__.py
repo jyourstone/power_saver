@@ -79,11 +79,11 @@ def _find_coordinator(
     device = registry.async_get(device_id)
     if device is None:
         raise ValueError(f"Device {device_id} not found")
-    # Find the config entry that belongs to Power Saver
-    for entry_id in device.config_entries:
-        coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
-        if coordinator is not None:
-            return coordinator
+    # Power Saver devices are identified by (DOMAIN, entry_id)
+    coordinators = hass.data.get(DOMAIN, {})
+    for domain, entry_id in device.identifiers:
+        if domain == DOMAIN and entry_id in coordinators:
+            return coordinators[entry_id]
     raise ValueError(
         f"Device {device_id} is not a Power Saver device"
     )
